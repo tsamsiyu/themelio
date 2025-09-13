@@ -1,35 +1,32 @@
 # Themelio Reconciler
 
-The core reconciliation engine for Themelio. This module handles the reconciliation pattern implementation and etcd integration.
-
 ## Overview
 
-The reconciler is responsible for:
+REST API for cloud infrastructure management.
 
-- Managing the desired state of resources
-- Comparing desired state with actual state
-- Triggering reconciliation actions
-- Storing state in etcd
-- Coordinating with cloud providers
+## Architecture
 
-## Components
+## Project Structure
 
-- **Controller**: Main reconciliation controller
-- **ETCD Client**: State storage integration
-- **Types**: Generic resource definitions
-
-## Building
-
-```bash
-go build -o bin/reconciler cmd/main.go
 ```
-
-## Running
-
-```bash
-./bin/reconciler
+api/
+├── cmd/
+│   └── main.go                     # Application entry point
+├── internal/
+│   ├── api/                        # API layer
+│   │   ├── handlers/
+│   │   ├── middleware/
+│   │   └── server/
+│   ├── app/
+│   │   └── module.go               # Dependency injection
+│   ├── config/
+│   │   └── config.go               # Configuration management
+│   ├── repository/                 # DB layer
+│   │   ├── resource_repository.go
+│   │   └── schema_repository.go
+│   ├── service/                    # Service layer
+│   │   ├── resource_service.go
+│   │   └── types.go
+│   └── errors/
+│       └── errors.go               # Common errors
 ```
-
-## Configuration
-
-Configuration options will be added as the implementation progresses.
