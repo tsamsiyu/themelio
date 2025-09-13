@@ -1,0 +1,72 @@
+# Themelio
+
+Themelio is a Go-based infrastructure management system that provides a simplified interface over cloud and on-premises infrastructure using the reconciliation pattern (similar to Kubernetes). It uses etcd as state storage and supports multiple cloud providers.
+
+## Architecture
+
+The project is organized into four main modules:
+
+- **reconciler**: Core reconciliation logic and etcd integration
+- **aws**: AWS provider implementation
+- **gcp**: Google Cloud Platform provider implementation  
+- **azure**: Microsoft Azure provider implementation
+
+Each module is a separate Go module with its own `go.mod` file and can be developed independently.
+
+## Project Structure
+
+```
+themelio/
+├── reconciler/          # Core reconciliation engine
+│   ├── cmd/            # Main application entry point
+│   ├── internal/       # Internal packages (controller, etcd)
+│   └── pkg/            # Public packages (types)
+├── aws/                # AWS provider
+│   ├── cmd/            # AWS provider entry point
+│   ├── internal/       # Internal AWS implementation
+│   └── pkg/            # AWS-specific types
+├── gcp/                # GCP provider
+│   ├── cmd/            # GCP provider entry point
+│   ├── internal/       # Internal GCP implementation
+│   └── pkg/            # GCP-specific types
+└── azure/              # Azure provider
+    ├── cmd/            # Azure provider entry point
+    ├── internal/       # Internal Azure implementation
+    └── pkg/            # Azure-specific types
+```
+
+## Getting Started
+
+Each module can be built and run independently:
+
+```bash
+# Build and run the reconciler
+cd reconciler
+go build -o bin/reconciler cmd/main.go
+./bin/reconciler
+
+# Build and run AWS provider
+cd aws
+go build -o bin/aws cmd/main.go
+./bin/aws
+
+# Build and run GCP provider
+cd gcp
+go build -o bin/gcp cmd/main.go
+./bin/gcp
+
+# Build and run Azure provider
+cd azure
+go build -o bin/azure cmd/main.go
+./bin/azure
+```
+
+## Resources
+
+Currently, the following resources are planned:
+
+- **Network**: Virtual network abstraction (VPC/VNet)
+
+## License
+
+[License information to be added]
