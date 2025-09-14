@@ -3,15 +3,12 @@ package repository
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"strings"
 	"time"
 
 	"github.com/pkg/errors"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	internalerrors "github.com/tsamsiyu/themelio/api/internal/errors"
 )
@@ -31,11 +28,11 @@ type WatchEvent struct {
 }
 
 type ResourceRepository interface {
-	Replace(ctx context.Context, gvk schema.GroupVersionKind, namespace, name string, resource *unstructured.Unstructured) error
-	Get(ctx context.Context, gvk schema.GroupVersionKind, namespace, name string) (*unstructured.Unstructured, error)
-	List(ctx context.Context, gvk schema.GroupVersionKind, namespace string) ([]*unstructured.Unstructured, error)
-	Delete(ctx context.Context, gvk schema.GroupVersionKind, namespace, name string) error
-	Watch(ctx context.Context, gvk schema.GroupVersionKind, namespace string, eventChan chan<- WatchEvent) error
+	Replace(ctx context.Context, key ObjectKey, resource *unstructured.Unstructured) error
+	Get(ctx context.Context, key ObjectKey) (*unstructured.Unstructured, error)
+	List(ctx context.Context, key ObjectKey) ([]*unstructured.Unstructured, error)
+	Delete(ctx context.Context, key ObjectKey) error
+	Watch(ctx context.Context, key ObjectKey, eventChan chan<- WatchEvent) error
 }
 
 type resourceRepository struct {
@@ -50,40 +47,35 @@ func NewResourceRepository(logger *zap.Logger, client *clientv3.Client) Resource
 	}
 }
 
-func (r *resourceRepository) Replace(ctx context.Context, gvk schema.GroupVersionKind, namespace, name string, resource *unstructured.Unstructured) error {
-	key := r.buildKey(gvk, namespace, name)
+func (r *resourceRepository) Replace(ctx context.Context, key ObjectKey, resource *unstructured.Unstructured) error {
+	etcdKey := key.ToKey()
 
 	data, err := r.marshalResource(resource)
 	if err != nil {
 		return err
 	}
 
-	_, err = r.client.Put(ctx, key, data)
+	_, err = r.client.Put(ctx, etcdKey, data)
 	if err != nil {
 		return errors.Wrap(err, "failed to store resource in etcd")
 	}
 
 	r.logger.Debug("Resource stored successfully in etcd",
-		zap.String("key", key),
-		zap.String("group", gvk.Group),
-		zap.String("version", gvk.Version),
-		zap.String("kind", gvk.Kind),
-		zap.String("namespace", namespace),
-		zap.String("name", name))
+		zap.Object("objectKey", key))
 
 	return nil
 }
 
-func (r *resourceRepository) Get(ctx context.Context, gvk schema.GroupVersionKind, namespace, name string) (*unstructured.Unstructured, error) {
-	key := r.buildKey(gvk, namespace, name)
+func (r *resourceRepository) Get(ctx context.Context, key ObjectKey) (*unstructured.Unstructured, error) {
+	etcdKey := key.ToKey()
 
-	resp, err := r.client.Get(ctx, key)
+	resp, err := r.client.Get(ctx, etcdKey)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get resource from etcd")
 	}
 
 	if len(resp.Kvs) == 0 {
-		return nil, NewNotFoundError(gvk.Kind, namespace, name)
+		return nil, NewNotFoundError(key.Kind, key.Namespace, key.Name)
 	}
 
 	resource, err := r.unmarshalResource(resp.Kvs[0].Value)
@@ -94,8 +86,8 @@ func (r *resourceRepository) Get(ctx context.Context, gvk schema.GroupVersionKin
 	return resource, nil
 }
 
-func (r *resourceRepository) List(ctx context.Context, gvk schema.GroupVersionKind, namespace string) ([]*unstructured.Unstructured, error) {
-	prefix := r.buildKey(gvk, namespace, "")
+func (r *resourceRepository) List(ctx context.Context, key ObjectKey) ([]*unstructured.Unstructured, error) {
+	prefix := key.ToKey()
 
 	resp, err := r.client.Get(ctx, prefix, clientv3.WithPrefix())
 	if err != nil {
@@ -114,25 +106,20 @@ func (r *resourceRepository) List(ctx context.Context, gvk schema.GroupVersionKi
 	return resources, nil
 }
 
-func (r *resourceRepository) Delete(ctx context.Context, gvk schema.GroupVersionKind, namespace, name string) error {
-	key := r.buildKey(gvk, namespace, name)
+func (r *resourceRepository) Delete(ctx context.Context, key ObjectKey) error {
+	etcdKey := key.ToKey()
 
-	resp, err := r.client.Delete(ctx, key)
+	resp, err := r.client.Delete(ctx, etcdKey)
 	if err != nil {
 		return errors.Wrap(err, "failed to delete resource from etcd")
 	}
 
 	if resp.Deleted == 0 {
-		return NewNotFoundError(gvk.Kind, namespace, name)
+		return NewNotFoundError(key.Kind, key.Namespace, key.Name)
 	}
 
 	r.logger.Debug("Resource deleted successfully from etcd",
-		zap.String("key", key),
-		zap.String("group", gvk.Group),
-		zap.String("version", gvk.Version),
-		zap.String("kind", gvk.Kind),
-		zap.String("name", name),
-		zap.String("namespace", namespace))
+		zap.Object("objectKey", key))
 
 	return nil
 }
@@ -154,8 +141,8 @@ func (r *resourceRepository) unmarshalResource(data []byte) (*unstructured.Unstr
 	return &obj, nil
 }
 
-func (r *resourceRepository) Watch(ctx context.Context, gvk schema.GroupVersionKind, namespace string, eventChan chan<- WatchEvent) error {
-	prefix := r.buildKey(gvk, namespace, "")
+func (r *resourceRepository) Watch(ctx context.Context, key ObjectKey, eventChan chan<- WatchEvent) error {
+	prefix := key.ToKey()
 
 	go r.watchResources(ctx, prefix, eventChan)
 
@@ -240,11 +227,16 @@ func (r *resourceRepository) convertEtcdEventToWatchEvent(ev *clientv3.Event) (W
 			}
 			event.Object = resource
 		} else {
+			objectKey, err := ParseKey(string(ev.Kv.Key))
+			if err != nil {
+				return event, errors.Wrap(err, "failed to parse etcd key")
+			}
+
 			event.Object = &unstructured.Unstructured{
 				Object: map[string]interface{}{
 					"metadata": map[string]interface{}{
-						"name":      r.extractNameFromKey(string(ev.Kv.Key)),
-						"namespace": r.extractNamespaceFromKey(string(ev.Kv.Key)),
+						"name":      objectKey.Name,
+						"namespace": objectKey.Namespace,
 					},
 				},
 			}
@@ -255,35 +247,4 @@ func (r *resourceRepository) convertEtcdEventToWatchEvent(ev *clientv3.Event) (W
 	}
 
 	return event, nil
-}
-
-func (r *resourceRepository) buildKey(gvk schema.GroupVersionKind, namespace, name string) string {
-	if name == "" {
-		if namespace == "" {
-			return fmt.Sprintf("/%s/%s/%s/", gvk.Group, gvk.Version, gvk.Kind)
-		}
-		return fmt.Sprintf("/%s/%s/%s/%s/", gvk.Group, gvk.Version, gvk.Kind, namespace)
-	}
-
-	if namespace == "" {
-		namespace = "default"
-	}
-
-	return fmt.Sprintf("/%s/%s/%s/%s/%s", gvk.Group, gvk.Version, gvk.Kind, namespace, name)
-}
-
-func (r *resourceRepository) extractNameFromKey(key string) string {
-	parts := strings.Split(key, "/")
-	if len(parts) >= 5 {
-		return parts[len(parts)-1]
-	}
-	return ""
-}
-
-func (r *resourceRepository) extractNamespaceFromKey(key string) string {
-	parts := strings.Split(key, "/")
-	if len(parts) >= 5 {
-		return parts[len(parts)-2]
-	}
-	return "default"
 }

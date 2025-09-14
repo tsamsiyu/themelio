@@ -50,7 +50,8 @@ func (s *resourceService) ReplaceResource(ctx context.Context, gvk schema.GroupV
 		return internalerrors.NewInvalidResourceError("schema validation failed")
 	}
 
-	if err := s.repo.Replace(ctx, gvk, namespace, name, resource); err != nil {
+	objectKey := repository.NewObjectKey(gvk.Group, gvk.Version, gvk.Kind, namespace, name)
+	if err := s.repo.Replace(ctx, objectKey, resource); err != nil {
 		return err
 	}
 
@@ -58,15 +59,18 @@ func (s *resourceService) ReplaceResource(ctx context.Context, gvk schema.GroupV
 }
 
 func (s *resourceService) GetResource(ctx context.Context, gvk schema.GroupVersionKind, namespace, name string) (*unstructured.Unstructured, error) {
-	return s.repo.Get(ctx, gvk, namespace, name)
+	objectKey := repository.NewObjectKey(gvk.Group, gvk.Version, gvk.Kind, namespace, name)
+	return s.repo.Get(ctx, objectKey)
 }
 
 func (s *resourceService) ListResources(ctx context.Context, gvk schema.GroupVersionKind, namespace string) ([]*unstructured.Unstructured, error) {
-	return s.repo.List(ctx, gvk, namespace)
+	objectKey := repository.NewObjectKey(gvk.Group, gvk.Version, gvk.Kind, namespace, "")
+	return s.repo.List(ctx, objectKey)
 }
 
 func (s *resourceService) DeleteResource(ctx context.Context, gvk schema.GroupVersionKind, namespace, name string) error {
-	return s.repo.Delete(ctx, gvk, namespace, name)
+	objectKey := repository.NewObjectKey(gvk.Group, gvk.Version, gvk.Kind, namespace, name)
+	return s.repo.Delete(ctx, objectKey)
 }
 
 func (s *resourceService) convertJSONToUnstructured(jsonData []byte) (*unstructured.Unstructured, error) {
