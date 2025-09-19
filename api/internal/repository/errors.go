@@ -1,22 +1,22 @@
 package repository
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/tsamsiyu/themelio/api/internal/repository/types"
+)
 
 // NotFoundError represents when a resource is not found
 type NotFoundError struct {
-	ResourceType string
-	Namespace    string
-	Name         string
+	ObjectKey types.ObjectKey
 }
 
 func (e *NotFoundError) Error() string {
-	return fmt.Sprintf("resource %s/%s/%s not found", e.ResourceType, e.Namespace, e.Name)
+	return fmt.Sprintf("resource %s not found", e.ObjectKey.String())
 }
 
-func NewNotFoundError(resourceType, namespace, name string) *NotFoundError {
+func NewNotFoundError(objectKey types.ObjectKey) *NotFoundError {
 	return &NotFoundError{
-		ResourceType: resourceType,
-		Namespace:    namespace,
-		Name:         name,
+		ObjectKey: objectKey,
 	}
 }

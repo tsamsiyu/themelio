@@ -47,14 +47,9 @@ func (k ResourceKey) ToGroupVersionKind() GroupVersionKind {
 	}
 }
 
-// ToKey creates a key from the ResourceKey (with leading "/" for etcd compatibility)
-func (k ResourceKey) ToKey() string {
-	return fmt.Sprintf("/%s/%s/%s/%s", k.Group, k.Version, k.Kind, k.Namespace)
-}
-
 // String returns the string representation of the ResourceKey
 func (k ResourceKey) String() string {
-	return k.ToKey()
+	return fmt.Sprintf("/%s/%s/%s/%s", k.Group, k.Version, k.Kind, k.Namespace)
 }
 
 // ParseResourceKey parses a resource key string back to ResourceKey

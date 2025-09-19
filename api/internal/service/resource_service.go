@@ -3,10 +3,8 @@ package service
 import (
 	"context"
 	"encoding/json"
-	"time"
 
 	"go.uber.org/zap"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	internalerrors "github.com/tsamsiyu/themelio/api/internal/errors"
@@ -62,19 +60,7 @@ func (s *resourceService) ListResources(ctx context.Context, resourceKey types.R
 }
 
 func (s *resourceService) DeleteResource(ctx context.Context, objectKey types.ObjectKey) error {
-	resource, err := s.repo.Get(ctx, objectKey)
-	if err != nil {
-		return err
-	}
-
-	if resource.GetDeletionTimestamp() == nil {
-		resource.SetDeletionTimestamp(&metav1.Time{Time: time.Now()})
-		if err := s.repo.Replace(ctx, objectKey, resource); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return s.repo.MarkDeleted(ctx, objectKey)
 }
 
 func (s *resourceService) convertJSONToUnstructured(jsonData []byte) (*unstructured.Unstructured, error) {

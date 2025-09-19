@@ -57,6 +57,14 @@ func (m *mockResourceRepository) Watch(ctx context.Context, key types.ResourceKe
 	return nil
 }
 
+func (m *mockResourceRepository) MarkDeleted(ctx context.Context, key types.ObjectKey) error {
+	return nil
+}
+
+func (m *mockResourceRepository) ListDeletions(ctx context.Context) ([]types.ObjectKey, error) {
+	return []types.ObjectKey{}, nil
+}
+
 func (m *mockResourceRepository) sendEvent(event repository.WatchEvent) {
 	m.watchEvents <- event
 }

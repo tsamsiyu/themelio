@@ -75,10 +75,6 @@ func (k ObjectKey) ToResourceKey() ResourceKey {
 	}
 }
 
-func (k ObjectKey) ToKey() string {
-	return fmt.Sprintf("/%s/%s/%s/%s/%s", k.Group, k.Version, k.Kind, k.Namespace, k.Name)
-}
-
 // ParseObjectKey parses a key string back to ObjectKey (requires all 5 parts)
 func ParseObjectKey(key string) (ObjectKey, error) {
 	key = strings.TrimPrefix(key, "/")
@@ -99,13 +95,13 @@ func ParseObjectKey(key string) (ObjectKey, error) {
 
 // HasPrefix checks if the given key is a prefix of this ObjectKey
 func (k ObjectKey) HasPrefix(prefix string) bool {
-	keyStr := k.ToKey()
+	keyStr := k.String()
 	return strings.HasPrefix(keyStr, prefix)
 }
 
 // String returns the string representation of the ObjectKey
 func (k ObjectKey) String() string {
-	return k.ToKey()
+	return fmt.Sprintf("/%s/%s/%s/%s/%s", k.Group, k.Version, k.Kind, k.Namespace, k.Name)
 }
 
 // MarshalLogObject implements zapcore.ObjectMarshaler for structured logging

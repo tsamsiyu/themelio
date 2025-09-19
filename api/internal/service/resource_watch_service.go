@@ -82,7 +82,7 @@ func NewResourceWatchService(logger *zap.Logger, repo repository.ResourceReposit
 }
 
 func (s *ResourceWatchService) Watch(ctx context.Context, resourceKey types.ResourceKey) <-chan repository.WatchEvent {
-	watchKey := resourceKey.ToKey()
+	watchKey := resourceKey.String()
 
 	clientChan := make(chan repository.WatchEvent, WATCH_BUFFER_SIZE)
 
@@ -100,7 +100,7 @@ func (s *ResourceWatchService) Watch(ctx context.Context, resourceKey types.Reso
 }
 
 func (s *ResourceWatchService) subscribe(ctx context.Context, resourceKey types.ResourceKey) {
-	watchKey := resourceKey.ToKey()
+	watchKey := resourceKey.String()
 
 	subscriptionChan := make(chan repository.WatchEvent)
 

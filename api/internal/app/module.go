@@ -16,9 +16,11 @@ import (
 	"github.com/tsamsiyu/themelio/api/internal/repository"
 	"github.com/tsamsiyu/themelio/api/internal/service"
 	sharedservice "github.com/tsamsiyu/themelio/api/internal/service/shared"
+	"github.com/tsamsiyu/themelio/api/internal/worker/gc"
 )
 
-var Module = fx.Options(
+// CommonModule provides shared dependencies for both API and Worker
+var CommonModule = fx.Options(
 	fx.Provide(
 		config.Load,
 		NewLogger,
@@ -28,11 +30,29 @@ var Module = fx.Options(
 		repository.NewSchemaRepository,
 		service.NewResourceService,
 		sharedservice.NewSchemaService,
+	),
+)
+
+// APIModule provides dependencies specific to the API server
+var APIModule = fx.Options(
+	CommonModule,
+	fx.Provide(
 		handlers.NewResourceHandler,
 		server.NewRouter,
 		server.NewServer,
 	),
 )
+
+// WorkerModule provides dependencies specific to the worker
+var WorkerModule = fx.Options(
+	CommonModule,
+	fx.Provide(
+		gc.NewGCWorker,
+	),
+)
+
+// Module is kept for backward compatibility, defaults to APIModule
+var Module = APIModule
 
 func NewLogger(cfg *config.Config) (*zap.Logger, error) {
 	var zapConfig zap.Config

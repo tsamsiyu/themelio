@@ -3,11 +3,13 @@ package repository
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/pkg/errors"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	internalerrors "github.com/tsamsiyu/themelio/api/internal/errors"
@@ -34,6 +36,8 @@ type ResourceRepository interface {
 	List(ctx context.Context, key types.ResourceKey) ([]*unstructured.Unstructured, error)
 	Delete(ctx context.Context, key types.ObjectKey) error
 	Watch(ctx context.Context, key types.ResourceKey, eventChan chan<- WatchEvent) error
+	MarkDeleted(ctx context.Context, key types.ObjectKey) error
+	ListDeletions(ctx context.Context) ([]types.ObjectKey, error)
 }
 
 type resourceRepository struct {
@@ -49,7 +53,7 @@ func NewResourceRepository(logger *zap.Logger, client *clientv3.Client) Resource
 }
 
 func (r *resourceRepository) Replace(ctx context.Context, key types.ObjectKey, resource *unstructured.Unstructured) error {
-	etcdKey := key.ToKey()
+	etcdKey := key.String()
 
 	data, err := r.marshalResource(resource)
 	if err != nil {
@@ -68,7 +72,7 @@ func (r *resourceRepository) Replace(ctx context.Context, key types.ObjectKey, r
 }
 
 func (r *resourceRepository) Get(ctx context.Context, key types.ObjectKey) (*unstructured.Unstructured, error) {
-	etcdKey := key.ToKey()
+	etcdKey := key.String()
 
 	resp, err := r.client.Get(ctx, etcdKey)
 	if err != nil {
@@ -76,7 +80,7 @@ func (r *resourceRepository) Get(ctx context.Context, key types.ObjectKey) (*uns
 	}
 
 	if len(resp.Kvs) == 0 {
-		return nil, NewNotFoundError(key.Kind, key.Namespace, key.Name)
+		return nil, NewNotFoundError(key)
 	}
 
 	resource, err := r.unmarshalResource(resp.Kvs[0].Value)
@@ -88,7 +92,7 @@ func (r *resourceRepository) Get(ctx context.Context, key types.ObjectKey) (*uns
 }
 
 func (r *resourceRepository) List(ctx context.Context, key types.ResourceKey) ([]*unstructured.Unstructured, error) {
-	prefix := key.ToKey()
+	prefix := key.String()
 
 	resp, err := r.client.Get(ctx, prefix, clientv3.WithPrefix())
 	if err != nil {
@@ -108,7 +112,7 @@ func (r *resourceRepository) List(ctx context.Context, key types.ResourceKey) ([
 }
 
 func (r *resourceRepository) Delete(ctx context.Context, key types.ObjectKey) error {
-	etcdKey := key.ToKey()
+	etcdKey := key.String()
 
 	resp, err := r.client.Delete(ctx, etcdKey)
 	if err != nil {
@@ -116,7 +120,7 @@ func (r *resourceRepository) Delete(ctx context.Context, key types.ObjectKey) er
 	}
 
 	if resp.Deleted == 0 {
-		return NewNotFoundError(key.Kind, key.Namespace, key.Name)
+		return NewNotFoundError(key)
 	}
 
 	r.logger.Debug("Resource deleted successfully from etcd",
@@ -143,7 +147,7 @@ func (r *resourceRepository) unmarshalResource(data []byte) (*unstructured.Unstr
 }
 
 func (r *resourceRepository) Watch(ctx context.Context, key types.ResourceKey, eventChan chan<- WatchEvent) error {
-	prefix := key.ToKey()
+	prefix := key.String()
 
 	go r.watchResources(ctx, prefix, eventChan)
 
@@ -248,4 +252,97 @@ func (r *resourceRepository) convertEtcdEventToWatchEvent(ev *clientv3.Event) (W
 	}
 
 	return event, nil
+}
+
+// MarkDeleted marks a resource for deletion by setting deletionTimestamp and adding to deletion collection
+func (r *resourceRepository) MarkDeleted(ctx context.Context, key types.ObjectKey) error {
+	etcdKey := key.String()
+	deletionKey := fmt.Sprintf("/deletion%s", etcdKey)
+
+	getResp, err := r.client.Get(ctx, etcdKey)
+	if err != nil {
+		return errors.Wrap(err, "failed to get resource for deletion marking")
+	}
+
+	if len(getResp.Kvs) == 0 {
+		return NewNotFoundError(key)
+	}
+
+	resource, err := r.unmarshalResource(getResp.Kvs[0].Value)
+	if err != nil {
+		return internalerrors.NewMarshalingError("failed to unmarshal resource for deletion marking")
+	}
+
+	if deletionTimestamp := resource.GetDeletionTimestamp(); deletionTimestamp != nil {
+		r.logger.Debug("Resource already marked for deletion",
+			zap.Object("objectKey", key),
+			zap.Time("deletionTimestamp", deletionTimestamp.Time))
+		return nil // Already marked for deletion
+	}
+
+	now := v1.NewTime(time.Now())
+	resource.SetDeletionTimestamp(&now)
+
+	updatedData, err := r.marshalResource(resource)
+	if err != nil {
+		return internalerrors.NewMarshalingError("failed to marshal resource with deletion timestamp")
+	}
+
+	deletionRecord := map[string]interface{}{
+		"objectKey": key,
+		"timestamp": now.Time,
+	}
+	deletionData, err := json.Marshal(deletionRecord)
+	if err != nil {
+		return internalerrors.NewMarshalingError("failed to marshal deletion record")
+	}
+
+	txn := r.client.Txn(ctx)
+
+	txnResp, err := txn.
+		Then(clientv3.OpPut(etcdKey, updatedData)).
+		Then(clientv3.OpPut(deletionKey, string(deletionData))).
+		Commit()
+
+	if err != nil {
+		return errors.Wrap(err, "failed to execute deletion marking transaction")
+	}
+
+	if !txnResp.Succeeded {
+		return errors.New("deletion marking transaction failed")
+	}
+
+	return nil
+}
+
+// ListDeletions returns all resources marked for deletion
+func (r *resourceRepository) ListDeletions(ctx context.Context) ([]types.ObjectKey, error) {
+	prefix := "/deletion/"
+
+	resp, err := r.client.Get(ctx, prefix, clientv3.WithPrefix())
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to list deletion records from etcd")
+	}
+
+	var objectKeys []types.ObjectKey
+	for _, kv := range resp.Kvs {
+		var deletionRecord map[string]interface{}
+		if err := json.Unmarshal(kv.Value, &deletionRecord); err != nil {
+			continue
+		}
+
+		objectKeyRaw, ok := deletionRecord["objectKey"]
+		if !ok {
+			continue
+		}
+
+		objectKey, err := types.ParseObjectKey(objectKeyRaw.(string))
+		if err != nil {
+			continue
+		}
+
+		objectKeys = append(objectKeys, objectKey)
+	}
+
+	return objectKeys, nil
 }
