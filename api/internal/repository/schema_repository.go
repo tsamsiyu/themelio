@@ -3,7 +3,6 @@ package repository
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 
 	"github.com/pkg/errors"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -32,15 +31,13 @@ func NewSchemaRepository(logger *zap.Logger, etcdClient *clientv3.Client) Schema
 }
 
 func (r *schemaRepository) GetSchema(ctx context.Context, gvk types.GroupVersionKind) (*apiextensions.JSONSchemaProps, error) {
-	key := r.getSchemaKey(gvk)
-
-	resp, err := r.etcdClient.Get(ctx, key)
+	resp, err := r.etcdClient.Get(ctx, gvk.String())
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get schema from etcd")
 	}
 
 	if len(resp.Kvs) == 0 {
-		return nil, NewNotFoundError(types.NewObjectKey(gvk.Group, gvk.Version, gvk.Kind, "", ""))
+		return nil, NewNotFoundError(gvk.String())
 	}
 
 	var schema apiextensions.JSONSchemaProps
@@ -52,14 +49,12 @@ func (r *schemaRepository) GetSchema(ctx context.Context, gvk types.GroupVersion
 }
 
 func (r *schemaRepository) StoreSchema(ctx context.Context, gvk types.GroupVersionKind, schema *apiextensions.JSONSchemaProps) error {
-	key := r.getSchemaKey(gvk)
-
 	schemaData, err := json.Marshal(schema)
 	if err != nil {
 		return internalerrors.NewMarshalingError("Failed to marshal schema")
 	}
 
-	_, err = r.etcdClient.Put(ctx, key, string(schemaData))
+	_, err = r.etcdClient.Put(ctx, gvk.String(), string(schemaData))
 	if err != nil {
 		return errors.Wrap(err, "failed to store schema in etcd")
 	}
@@ -67,12 +62,4 @@ func (r *schemaRepository) StoreSchema(ctx context.Context, gvk types.GroupVersi
 	r.logger.Info("Schema stored successfully", zap.Object("gvk", gvk))
 
 	return nil
-}
-
-func (r *schemaRepository) getSchemaKey(gvk types.GroupVersionKind) string {
-	group := gvk.Group
-	if group == "" {
-		group = "core"
-	}
-	return fmt.Sprintf("/schemas/%s/%s/%s", group, gvk.Version, gvk.Kind)
 }
