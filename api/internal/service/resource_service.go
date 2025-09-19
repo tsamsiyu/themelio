@@ -3,10 +3,11 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"time"
 
 	"go.uber.org/zap"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	internalerrors "github.com/tsamsiyu/themelio/api/internal/errors"
 	"github.com/tsamsiyu/themelio/api/internal/repository"
@@ -14,10 +15,10 @@ import (
 )
 
 type ResourceService interface {
-	ReplaceResource(ctx context.Context, gvk schema.GroupVersionKind, jsonData []byte) error
-	GetResource(ctx context.Context, gvk schema.GroupVersionKind, namespace, name string) (*unstructured.Unstructured, error)
-	ListResources(ctx context.Context, gvk schema.GroupVersionKind, namespace string) ([]*unstructured.Unstructured, error)
-	DeleteResource(ctx context.Context, gvk schema.GroupVersionKind, namespace, name string) error
+	ReplaceResource(ctx context.Context, objectKey repository.ObjectKey, jsonData []byte) error
+	GetResource(ctx context.Context, objectKey repository.ObjectKey) (*unstructured.Unstructured, error)
+	ListResources(ctx context.Context, objectKey repository.ObjectKey) ([]*unstructured.Unstructured, error)
+	DeleteResource(ctx context.Context, objectKey repository.ObjectKey) error
 }
 
 type resourceService struct {
@@ -34,23 +35,16 @@ func NewResourceService(logger *zap.Logger, repo repository.ResourceRepository, 
 	}
 }
 
-func (s *resourceService) ReplaceResource(ctx context.Context, gvk schema.GroupVersionKind, jsonData []byte) error {
+func (s *resourceService) ReplaceResource(ctx context.Context, objectKey repository.ObjectKey, jsonData []byte) error {
 	resource, err := s.convertJSONToUnstructured(jsonData)
 	if err != nil {
 		return err
-	}
-
-	name := resource.GetName()
-	namespace := resource.GetNamespace()
-	if namespace == "" {
-		namespace = "default"
 	}
 
 	if err := s.schemaService.ValidateResource(ctx, resource); err != nil {
 		return internalerrors.NewInvalidResourceError("schema validation failed")
 	}
 
-	objectKey := repository.NewObjectKey(gvk.Group, gvk.Version, gvk.Kind, namespace, name)
 	if err := s.repo.Replace(ctx, objectKey, resource); err != nil {
 		return err
 	}
@@ -58,19 +52,28 @@ func (s *resourceService) ReplaceResource(ctx context.Context, gvk schema.GroupV
 	return nil
 }
 
-func (s *resourceService) GetResource(ctx context.Context, gvk schema.GroupVersionKind, namespace, name string) (*unstructured.Unstructured, error) {
-	objectKey := repository.NewObjectKey(gvk.Group, gvk.Version, gvk.Kind, namespace, name)
+func (s *resourceService) GetResource(ctx context.Context, objectKey repository.ObjectKey) (*unstructured.Unstructured, error) {
 	return s.repo.Get(ctx, objectKey)
 }
 
-func (s *resourceService) ListResources(ctx context.Context, gvk schema.GroupVersionKind, namespace string) ([]*unstructured.Unstructured, error) {
-	objectKey := repository.NewObjectKey(gvk.Group, gvk.Version, gvk.Kind, namespace, "")
+func (s *resourceService) ListResources(ctx context.Context, objectKey repository.ObjectKey) ([]*unstructured.Unstructured, error) {
 	return s.repo.List(ctx, objectKey)
 }
 
-func (s *resourceService) DeleteResource(ctx context.Context, gvk schema.GroupVersionKind, namespace, name string) error {
-	objectKey := repository.NewObjectKey(gvk.Group, gvk.Version, gvk.Kind, namespace, name)
-	return s.repo.Delete(ctx, objectKey)
+func (s *resourceService) DeleteResource(ctx context.Context, objectKey repository.ObjectKey) error {
+	resource, err := s.repo.Get(ctx, objectKey)
+	if err != nil {
+		return err
+	}
+
+	if resource.GetDeletionTimestamp() == nil {
+		resource.SetDeletionTimestamp(&metav1.Time{Time: time.Now()})
+		if err := s.repo.Replace(ctx, objectKey, resource); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (s *resourceService) convertJSONToUnstructured(jsonData []byte) (*unstructured.Unstructured, error) {

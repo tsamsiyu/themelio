@@ -6,9 +6,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
 	"go.uber.org/zap"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"github.com/tsamsiyu/themelio/api/internal/api/errors"
+	"github.com/tsamsiyu/themelio/api/internal/repository"
 	"github.com/tsamsiyu/themelio/api/internal/service"
 )
 
@@ -31,7 +31,7 @@ func NewResourceHandler(
 }
 
 func (h *ResourceHandler) ReplaceResource(c *gin.Context) {
-	gvk := h.getGVKFromParams(c)
+	objectKey := h.getObjectKeyFromParams(c)
 
 	jsonData, err := c.GetRawData()
 	if err != nil {
@@ -39,7 +39,7 @@ func (h *ResourceHandler) ReplaceResource(c *gin.Context) {
 		return
 	}
 
-	err = h.resourceService.ReplaceResource(c.Request.Context(), gvk, jsonData)
+	err = h.resourceService.ReplaceResource(c.Request.Context(), objectKey, jsonData)
 	if err != nil {
 		c.Error(err)
 		return
@@ -49,11 +49,9 @@ func (h *ResourceHandler) ReplaceResource(c *gin.Context) {
 }
 
 func (h *ResourceHandler) GetResource(c *gin.Context) {
-	gvk := h.getGVKFromParams(c)
-	namespace := c.Param("namespace")
-	name := c.Param("name")
+	objectKey := h.getObjectKeyFromParams(c)
 
-	resource, err := h.resourceService.GetResource(c.Request.Context(), gvk, namespace, name)
+	resource, err := h.resourceService.GetResource(c.Request.Context(), objectKey)
 	if err != nil {
 		c.Error(err)
 		return
@@ -63,10 +61,9 @@ func (h *ResourceHandler) GetResource(c *gin.Context) {
 }
 
 func (h *ResourceHandler) ListResources(c *gin.Context) {
-	gvk := h.getGVKFromParams(c)
-	namespace := c.Param("namespace")
+	objectKey := h.getObjectKeyFromParams(c)
 
-	resources, err := h.resourceService.ListResources(c.Request.Context(), gvk, namespace)
+	resources, err := h.resourceService.ListResources(c.Request.Context(), objectKey)
 	if err != nil {
 		c.Error(err)
 		return
@@ -81,11 +78,9 @@ func (h *ResourceHandler) ListResources(c *gin.Context) {
 }
 
 func (h *ResourceHandler) DeleteResource(c *gin.Context) {
-	gvk := h.getGVKFromParams(c)
-	namespace := c.Param("namespace")
-	name := c.Param("name")
+	objectKey := h.getObjectKeyFromParams(c)
 
-	err := h.resourceService.DeleteResource(c.Request.Context(), gvk, namespace, name)
+	err := h.resourceService.DeleteResource(c.Request.Context(), objectKey)
 	if err != nil {
 		c.Error(err)
 		return
@@ -94,15 +89,12 @@ func (h *ResourceHandler) DeleteResource(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Resource deleted successfully"})
 }
 
-// getGVKFromParams extracts GroupVersionKind from URL parameters
-func (h *ResourceHandler) getGVKFromParams(c *gin.Context) schema.GroupVersionKind {
+func (h *ResourceHandler) getObjectKeyFromParams(c *gin.Context) repository.ObjectKey {
 	group := c.Param("group")
 	version := c.Param("version")
 	kind := c.Param("kind")
+	namespace := c.Param("namespace")
+	name := c.Param("name")
 
-	return schema.GroupVersionKind{
-		Group:   group,
-		Version: version,
-		Kind:    kind,
-	}
+	return repository.NewObjectKey(group, version, kind, namespace, name)
 }

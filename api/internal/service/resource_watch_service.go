@@ -12,7 +12,7 @@ import (
 )
 
 const WATCH_BUFFER_SIZE = 100
-const MAX_LIST_TIMEOUT = 5 * time.Second
+const MAX_QUERY_TIMEOUT = 3 * time.Second
 
 // ResourceCacheEntry represents a cached resource entry
 type ResourceCacheEntry struct {
@@ -42,23 +42,20 @@ func DefaultWatchConfig() *WatchConfig {
 
 // ResourceWatchService provides a stateful wrapper over the resource repository watch method
 type ResourceWatchService struct {
-	// Dependencies
 	logger *zap.Logger
 	repo   repository.ResourceRepository
 
-	// Shared cache (thread-safe with sync.Map)
+	// each entry is the cache entry for the given object key
 	cache sync.Map // key: repository.ObjectKey, value: *ResourceCacheEntry
 
-	// Client management (thread-safe with sync.Map)
-	clients sync.Map // key: watchKey (gvk/namespace), value: []chan<- repository.WatchEvent
+	// each entry is the list of clients listening to the same watch key
+	clients sync.Map // key: repository.ObjectKey, value: []chan<- repository.WatchEvent
 
-	// Repository subscription management
-	subscriptions map[string]chan repository.WatchEvent // key: watchKey (gvk/namespace), value: repository channel
+	// each entry is the repository channel for the given watch key
+	subscriptions map[string]chan repository.WatchEvent // key: repository.ObjectKey, value: repository channel
 
-	// Background operations
 	stopChan chan struct{}
 
-	// Configuration
 	config *WatchConfig
 }
 
@@ -176,7 +173,7 @@ func (s *ResourceWatchService) pollAndReconcile() {
 			return true
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), MAX_LIST_TIMEOUT)
+		ctx, cancel := context.WithTimeout(context.Background(), MAX_QUERY_TIMEOUT)
 		defer cancel()
 
 		latestState, err := s.repo.List(ctx, watchKey)
@@ -206,13 +203,20 @@ func (s *ResourceWatchService) compareAndGenerateEvents(watchKey string, latestS
 	s.cache.Range(func(key, value interface{}) bool {
 		objectKey := key.(repository.ObjectKey)
 		if _, exists := latestStateMap[objectKey]; !exists {
+			deletedObject := &unstructured.Unstructured{
+				Object: map[string]interface{}{
+					"metadata": map[string]interface{}{
+						"name":      objectKey.Name,
+						"namespace": objectKey.Namespace,
+					},
+				},
+			}
+
 			event := repository.WatchEvent{
 				Type:      repository.WatchEventTypeDeleted,
-				Object:    &unstructured.Unstructured{},
+				Object:    deletedObject,
 				Timestamp: time.Now(),
 			}
-			event.Object.SetName(objectKey.Name)
-			event.Object.SetNamespace(objectKey.Namespace)
 
 			s.broadcastEvent(watchKey, event)
 		}
