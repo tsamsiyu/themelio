@@ -61,6 +61,10 @@ func (k ObjectKey) IsFull() bool {
 	return k.Name != ""
 }
 
+func (k ObjectKey) ToKeyWithoutName() string {
+	return fmt.Sprintf("/%s/%s/%s/%s", k.Group, k.Version, k.Kind, k.Namespace)
+}
+
 // ToKey creates a key from the ObjectKey (with leading "/" for etcd compatibility)
 func (k ObjectKey) ToKey() string {
 	if k.Name != "" {
