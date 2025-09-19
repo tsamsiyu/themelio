@@ -34,7 +34,7 @@ type ResourceRepository interface {
 	Replace(ctx context.Context, key types.ObjectKey, resource *unstructured.Unstructured) error
 	Get(ctx context.Context, key types.ObjectKey) (*unstructured.Unstructured, error)
 	List(ctx context.Context, key types.ResourceKey) ([]*unstructured.Unstructured, error)
-	Delete(ctx context.Context, key types.ObjectKey) error
+	Delete(ctx context.Context, key types.ObjectKey, markDeletionObjectKeys []types.ObjectKey, removeReferencesObjectKeys []types.ObjectKey) error
 	Watch(ctx context.Context, key types.ResourceKey, eventChan chan<- WatchEvent) error
 	MarkDeleted(ctx context.Context, key types.ObjectKey) error
 	ListDeletions(ctx context.Context) ([]types.ObjectKey, error)
@@ -132,7 +132,7 @@ func (r *resourceRepository) List(ctx context.Context, key types.ResourceKey) ([
 	return resources, nil
 }
 
-func (r *resourceRepository) Delete(ctx context.Context, key types.ObjectKey) error {
+func (r *resourceRepository) Delete(ctx context.Context, key types.ObjectKey, markDeletionObjectKeys []types.ObjectKey, removeReferencesObjectKeys []types.ObjectKey) error {
 	etcdKey := key.String()
 
 	resource, err := r.Get(ctx, key)
@@ -159,6 +159,48 @@ func (r *resourceRepository) Delete(ctx context.Context, key types.ObjectKey) er
 	txn := r.client.Txn(ctx)
 	ops := []clientv3.Op{clientv3.OpDelete(etcdKey)}
 	ops = append(ops, refOps...)
+
+	for _, childKey := range markDeletionObjectKeys {
+		deletionKey := fmt.Sprintf("/deletion%s", childKey.String())
+		deletionRecord := map[string]interface{}{
+			"timestamp": time.Now(),
+		}
+		deletionData, err := json.Marshal(deletionRecord)
+		if err != nil {
+			return errors.Wrap(err, "failed to marshal deletion record")
+		}
+		ops = append(ops, clientv3.OpPut(deletionKey, string(deletionData)))
+	}
+
+	for _, childKey := range removeReferencesObjectKeys {
+		child, err := r.Get(ctx, childKey)
+		if err != nil {
+			return errors.Wrap(err, "failed to get child for owner reference removal")
+		}
+
+		if child == nil {
+			continue
+		}
+
+		ownerRefs := child.GetOwnerReferences()
+		var newOwnerRefs []metav1.OwnerReference
+		for _, ref := range ownerRefs {
+			refKey := types.OwnerRefToObjectKey(ref, childKey.Namespace)
+			if refKey.String() != key.String() {
+				newOwnerRefs = append(newOwnerRefs, ref)
+			}
+		}
+		child.SetOwnerReferences(newOwnerRefs)
+
+		updatedData, err := r.marshalResource(child)
+		if err != nil {
+			return errors.Wrap(err, "failed to marshal updated child resource")
+		}
+		ops = append(ops, clientv3.OpPut(childKey.String(), updatedData))
+	}
+
+	deletionKey := fmt.Sprintf("/deletion%s", etcdKey)
+	ops = append(ops, clientv3.OpDelete(deletionKey))
 
 	txnResp, err := txn.Then(ops...).Commit()
 	if err != nil {

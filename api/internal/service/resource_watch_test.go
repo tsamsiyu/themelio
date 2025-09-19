@@ -39,7 +39,7 @@ func (m *mockResourceRepository) List(ctx context.Context, key types.ResourceKey
 	return m.listResult, m.listError
 }
 
-func (m *mockResourceRepository) Delete(ctx context.Context, key types.ObjectKey) error {
+func (m *mockResourceRepository) Delete(ctx context.Context, key types.ObjectKey, markDeletionObjectKeys []types.ObjectKey, removeReferencesObjectKeys []types.ObjectKey) error {
 	return nil
 }
 
