@@ -32,11 +32,14 @@ type ResourceStore interface {
 	GetRaw(ctx context.Context, key string) ([]byte, error)
 	ListRaw(ctx context.Context, prefix string) ([]KeyValue, error)
 
+	// Marshaling utilities
+	MarshalResource(resource *unstructured.Unstructured) (string, error)
+
 	// Transaction execution
 	ExecuteTransaction(ctx context.Context, ops []clientv3.Op) error
 
 	// Watch operations
-	Watch(ctx context.Context, key types.ResourceKey, eventChan chan<- WatchEvent) error
+	Watch(ctx context.Context, key types.ResourceKey, eventChan chan<- types.WatchEvent) error
 }
 
 type resourceStore struct {
@@ -53,7 +56,7 @@ func NewResourceStore(logger *zap.Logger, client *clientv3.Client) ResourceStore
 
 // ResourceStore implementation
 func (s *resourceStore) Put(ctx context.Context, key types.ObjectKey, resource *unstructured.Unstructured) error {
-	data, err := s.marshalResource(resource)
+	data, err := s.MarshalResource(resource)
 	if err != nil {
 		return err
 	}
@@ -142,12 +145,12 @@ func (s *resourceStore) ExecuteTransaction(ctx context.Context, ops []clientv3.O
 	return nil
 }
 
-func (s *resourceStore) Watch(ctx context.Context, key types.ResourceKey, eventChan chan<- WatchEvent) error {
+func (s *resourceStore) Watch(ctx context.Context, key types.ResourceKey, eventChan chan<- types.WatchEvent) error {
 	go s.watchResources(ctx, key.String(), eventChan)
 	return nil
 }
 
-func (s *resourceStore) marshalResource(resource *unstructured.Unstructured) (string, error) {
+func (s *resourceStore) MarshalResource(resource *unstructured.Unstructured) (string, error) {
 	data, err := json.Marshal(resource)
 	if err != nil {
 		return "", internalerrors.NewMarshalingError("Failed to marshal resource")
@@ -164,7 +167,7 @@ func (s *resourceStore) unmarshalResource(data []byte) (*unstructured.Unstructur
 	return &obj, nil
 }
 
-func (s *resourceStore) watchResources(ctx context.Context, prefix string, eventChan chan<- WatchEvent) {
+func (s *resourceStore) watchResources(ctx context.Context, prefix string, eventChan chan<- types.WatchEvent) {
 	defer close(eventChan)
 
 	watchChan := s.client.Watch(ctx, prefix, clientv3.WithPrefix())
@@ -213,17 +216,17 @@ func (s *resourceStore) watchResources(ctx context.Context, prefix string, event
 	}
 }
 
-func (s *resourceStore) convertEtcdEventToWatchEvent(ev *clientv3.Event) (WatchEvent, error) {
-	event := WatchEvent{
+func (s *resourceStore) convertEtcdEventToWatchEvent(ev *clientv3.Event) (types.WatchEvent, error) {
+	event := types.WatchEvent{
 		Timestamp: time.Now(),
 	}
 
 	switch ev.Type {
 	case clientv3.EventTypePut:
 		if ev.PrevKv == nil {
-			event.Type = WatchEventTypeAdded
+			event.Type = types.WatchEventTypeAdded
 		} else {
-			event.Type = WatchEventTypeModified
+			event.Type = types.WatchEventTypeModified
 		}
 
 		resource, err := s.unmarshalResource(ev.Kv.Value)
@@ -233,7 +236,7 @@ func (s *resourceStore) convertEtcdEventToWatchEvent(ev *clientv3.Event) (WatchE
 		event.Object = resource
 
 	case clientv3.EventTypeDelete:
-		event.Type = WatchEventTypeDeleted
+		event.Type = types.WatchEventTypeDeleted
 
 		if ev.PrevKv != nil {
 			resource, err := s.unmarshalResource(ev.PrevKv.Value)

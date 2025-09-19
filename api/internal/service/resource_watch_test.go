@@ -8,20 +8,19 @@ import (
 	"go.uber.org/zap"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	"github.com/tsamsiyu/themelio/api/internal/repository"
 	"github.com/tsamsiyu/themelio/api/internal/repository/types"
 )
 
 // mockResourceRepository is a mock implementation of ResourceRepository for testing
 type mockResourceRepository struct {
-	watchEvents chan repository.WatchEvent
+	watchEvents chan types.WatchEvent
 	listResult  []*unstructured.Unstructured
 	listError   error
 }
 
 func newMockResourceRepository() *mockResourceRepository {
 	return &mockResourceRepository{
-		watchEvents: make(chan repository.WatchEvent, 10),
+		watchEvents: make(chan types.WatchEvent, 10),
 		listResult:  make([]*unstructured.Unstructured, 0),
 		listError:   nil,
 	}
@@ -43,7 +42,7 @@ func (m *mockResourceRepository) Delete(ctx context.Context, key types.ObjectKey
 	return nil
 }
 
-func (m *mockResourceRepository) Watch(ctx context.Context, key types.ResourceKey, eventChan chan<- repository.WatchEvent) error {
+func (m *mockResourceRepository) Watch(ctx context.Context, key types.ResourceKey, eventChan chan<- types.WatchEvent) error {
 	go func() {
 		for event := range m.watchEvents {
 			select {
@@ -69,7 +68,7 @@ func (m *mockResourceRepository) GetReversedOwnerReferences(ctx context.Context,
 	return types.NewReversedOwnerReferenceSet(), nil
 }
 
-func (m *mockResourceRepository) sendEvent(event repository.WatchEvent) {
+func (m *mockResourceRepository) sendEvent(event types.WatchEvent) {
 	m.watchEvents <- event
 }
 
@@ -114,8 +113,8 @@ func TestResourceWatchService_Watch(t *testing.T) {
 	testResource.SetNamespace(resourceKey.Namespace)
 	testResource.SetResourceVersion("1")
 
-	testEvent := repository.WatchEvent{
-		Type:      repository.WatchEventTypeAdded,
+	testEvent := types.WatchEvent{
+		Type:      types.WatchEventTypeAdded,
 		Object:    testResource,
 		Timestamp: time.Now(),
 	}
@@ -125,8 +124,8 @@ func TestResourceWatchService_Watch(t *testing.T) {
 	// Wait for event
 	select {
 	case event := <-eventChan:
-		if event.Type != repository.WatchEventTypeAdded {
-			t.Errorf("Expected event type %s, got %s", repository.WatchEventTypeAdded, event.Type)
+		if event.Type != types.WatchEventTypeAdded {
+			t.Errorf("Expected event type %s, got %s", types.WatchEventTypeAdded, event.Type)
 		}
 		if event.Object.GetName() != "test-resource" {
 			t.Errorf("Expected resource name 'test-resource', got '%s'", event.Object.GetName())
@@ -170,8 +169,8 @@ func TestResourceWatchService_MultipleClients(t *testing.T) {
 	testResource.SetNamespace(resourceKey.Namespace)
 	testResource.SetResourceVersion("1")
 
-	testEvent := repository.WatchEvent{
-		Type:      repository.WatchEventTypeAdded,
+	testEvent := types.WatchEvent{
+		Type:      types.WatchEventTypeAdded,
 		Object:    testResource,
 		Timestamp: time.Now(),
 	}
@@ -188,12 +187,12 @@ func TestResourceWatchService_MultipleClients(t *testing.T) {
 		select {
 		case event := <-client1Chan:
 			t.Logf("Client 1 received event: %s", event.Type)
-			if event.Type == repository.WatchEventTypeAdded {
+			if event.Type == types.WatchEventTypeAdded {
 				client1Received = true
 			}
 		case event := <-client2Chan:
 			t.Logf("Client 2 received event: %s", event.Type)
-			if event.Type == repository.WatchEventTypeAdded {
+			if event.Type == types.WatchEventTypeAdded {
 				client2Received = true
 			}
 		case <-timeout:
@@ -242,8 +241,8 @@ func TestResourceWatchService_EventReconciliation(t *testing.T) {
 	initialResource.SetNamespace(resourceKey.Namespace)
 	initialResource.SetResourceVersion("1")
 
-	initialEvent := repository.WatchEvent{
-		Type:      repository.WatchEventTypeAdded,
+	initialEvent := types.WatchEvent{
+		Type:      types.WatchEventTypeAdded,
 		Object:    initialResource,
 		Timestamp: time.Now(),
 	}
@@ -253,8 +252,8 @@ func TestResourceWatchService_EventReconciliation(t *testing.T) {
 	// Wait for the initial event to be processed
 	select {
 	case event := <-eventChan:
-		if event.Type != repository.WatchEventTypeAdded {
-			t.Errorf("Expected initial event type %s, got %s", repository.WatchEventTypeAdded, event.Type)
+		if event.Type != types.WatchEventTypeAdded {
+			t.Errorf("Expected initial event type %s, got %s", types.WatchEventTypeAdded, event.Type)
 		}
 	case <-time.After(1 * time.Second):
 		t.Error("Timeout waiting for initial event")
@@ -279,9 +278,9 @@ func TestResourceWatchService_EventReconciliation(t *testing.T) {
 	for !deletedReceived || !addedReceived {
 		select {
 		case event := <-eventChan:
-			if event.Type == repository.WatchEventTypeDeleted && event.Object.GetName() == "initial-resource" {
+			if event.Type == types.WatchEventTypeDeleted && event.Object.GetName() == "initial-resource" {
 				deletedReceived = true
-			} else if event.Type == repository.WatchEventTypeAdded && event.Object.GetName() == "reconciled-resource" {
+			} else if event.Type == types.WatchEventTypeAdded && event.Object.GetName() == "reconciled-resource" {
 				addedReceived = true
 			}
 		case <-timeout:

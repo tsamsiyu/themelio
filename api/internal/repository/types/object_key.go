@@ -10,11 +10,11 @@ import (
 
 // ObjectKey represents a unique identifier for a Kubernetes resource
 type ObjectKey struct {
-	Group     string
-	Version   string
-	Kind      string
-	Namespace string
-	Name      string
+	Group     string `json:"group"`
+	Version   string `json:"version"`
+	Kind      string `json:"kind"`
+	Namespace string `json:"namespace"`
+	Name      string `json:"name"`
 }
 
 // NewObjectKey creates a new ObjectKey

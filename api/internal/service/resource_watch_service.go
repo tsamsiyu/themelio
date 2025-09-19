@@ -50,10 +50,10 @@ type ResourceWatchService struct {
 	cache sync.Map // key: types.ObjectKey, value: *ResourceCacheEntry
 
 	// each entry is the list of clients listening to the same watch key
-	clients sync.Map // key: types.ObjectKey, value: []chan<- repository.WatchEvent
+	clients sync.Map // key: types.ObjectKey, value: []chan<- types.WatchEvent
 
 	// each entry is the repository channel for the given watch key
-	subscriptions map[string]chan repository.WatchEvent // key: types.ObjectKey, value: repository channel
+	subscriptions map[string]chan types.WatchEvent // key: types.ObjectKey, value: repository channel
 
 	stopChan chan struct{}
 
@@ -69,7 +69,7 @@ func NewResourceWatchService(logger *zap.Logger, repo repository.ResourceReposit
 	service := &ResourceWatchService{
 		logger:        logger,
 		repo:          repo,
-		subscriptions: make(map[string]chan repository.WatchEvent),
+		subscriptions: make(map[string]chan types.WatchEvent),
 		stopChan:      make(chan struct{}),
 		config:        config,
 	}
@@ -81,13 +81,13 @@ func NewResourceWatchService(logger *zap.Logger, repo repository.ResourceReposit
 	return service
 }
 
-func (s *ResourceWatchService) Watch(ctx context.Context, resourceKey types.ResourceKey) <-chan repository.WatchEvent {
+func (s *ResourceWatchService) Watch(ctx context.Context, resourceKey types.ResourceKey) <-chan types.WatchEvent {
 	watchKey := resourceKey.String()
 
-	clientChan := make(chan repository.WatchEvent, WATCH_BUFFER_SIZE)
+	clientChan := make(chan types.WatchEvent, WATCH_BUFFER_SIZE)
 
-	existingClients, _ := s.clients.LoadOrStore(watchKey, []chan<- repository.WatchEvent{})
-	clients := existingClients.([]chan<- repository.WatchEvent)
+	existingClients, _ := s.clients.LoadOrStore(watchKey, []chan<- types.WatchEvent{})
+	clients := existingClients.([]chan<- types.WatchEvent)
 
 	clients = append(clients, clientChan)
 	s.clients.Store(watchKey, clients)
@@ -102,7 +102,7 @@ func (s *ResourceWatchService) Watch(ctx context.Context, resourceKey types.Reso
 func (s *ResourceWatchService) subscribe(ctx context.Context, resourceKey types.ResourceKey) {
 	watchKey := resourceKey.String()
 
-	subscriptionChan := make(chan repository.WatchEvent)
+	subscriptionChan := make(chan types.WatchEvent)
 
 	s.subscriptions[watchKey] = subscriptionChan
 
@@ -111,14 +111,14 @@ func (s *ResourceWatchService) subscribe(ctx context.Context, resourceKey types.
 	go s.forwardEvents(watchKey, subscriptionChan)
 }
 
-func (s *ResourceWatchService) forwardEvents(watchKey string, subscriptionChan <-chan repository.WatchEvent) {
+func (s *ResourceWatchService) forwardEvents(watchKey string, subscriptionChan <-chan types.WatchEvent) {
 	defer delete(s.subscriptions, watchKey)
 
 	for event := range subscriptionChan {
 		s.updateCacheFromEvent(event)
 
 		if clients, exists := s.clients.Load(watchKey); exists {
-			for _, clientChan := range clients.([]chan<- repository.WatchEvent) {
+			for _, clientChan := range clients.([]chan<- types.WatchEvent) {
 				select {
 				case clientChan <- event:
 				default:
@@ -132,7 +132,7 @@ func (s *ResourceWatchService) forwardEvents(watchKey string, subscriptionChan <
 }
 
 // updateCacheFromEvent updates the cache based on a watch event
-func (s *ResourceWatchService) updateCacheFromEvent(event repository.WatchEvent) {
+func (s *ResourceWatchService) updateCacheFromEvent(event types.WatchEvent) {
 	if event.Object == nil {
 		return
 	}
@@ -141,12 +141,12 @@ func (s *ResourceWatchService) updateCacheFromEvent(event repository.WatchEvent)
 	now := time.Now()
 
 	switch event.Type {
-	case repository.WatchEventTypeAdded, repository.WatchEventTypeModified:
+	case types.WatchEventTypeAdded, types.WatchEventTypeModified:
 		s.cache.Store(objectKey, &ResourceCacheEntry{
 			ResourceVersion: event.Object.GetResourceVersion(),
 			LastSeen:        now,
 		})
-	case repository.WatchEventTypeDeleted:
+	case types.WatchEventTypeDeleted:
 		s.cache.Delete(objectKey)
 	}
 }
@@ -215,8 +215,8 @@ func (s *ResourceWatchService) compareAndGenerateEvents(watchKey string, latestS
 				},
 			}
 
-			event := repository.WatchEvent{
-				Type:      repository.WatchEventTypeDeleted,
+			event := types.WatchEvent{
+				Type:      types.WatchEventTypeDeleted,
 				Object:    deletedObject,
 				Timestamp: time.Now(),
 			}
@@ -233,15 +233,15 @@ func (s *ResourceWatchService) compareAndGenerateEvents(watchKey string, latestS
 			if resource.GetResourceVersion() == cacheEntry.ResourceVersion {
 				continue
 			}
-			event := repository.WatchEvent{
-				Type:      repository.WatchEventTypeModified,
+			event := types.WatchEvent{
+				Type:      types.WatchEventTypeModified,
 				Object:    resource,
 				Timestamp: time.Now(),
 			}
 			s.broadcastEvent(watchKey, event)
 		} else {
-			event := repository.WatchEvent{
-				Type:      repository.WatchEventTypeAdded,
+			event := types.WatchEvent{
+				Type:      types.WatchEventTypeAdded,
 				Object:    resource,
 				Timestamp: time.Now(),
 			}
@@ -276,9 +276,9 @@ func (s *ResourceWatchService) updateCache(resources []*unstructured.Unstructure
 }
 
 // broadcastEvent broadcasts an event to all clients watching the given watch key
-func (s *ResourceWatchService) broadcastEvent(watchKey string, event repository.WatchEvent) {
+func (s *ResourceWatchService) broadcastEvent(watchKey string, event types.WatchEvent) {
 	if clients, exists := s.clients.Load(watchKey); exists {
-		for _, clientChan := range clients.([]chan<- repository.WatchEvent) {
+		for _, clientChan := range clients.([]chan<- types.WatchEvent) {
 			select {
 			case clientChan <- event:
 			default:
