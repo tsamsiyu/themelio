@@ -2,12 +2,15 @@ package repository
 
 import (
 	"context"
+	"time"
 
 	"github.com/pkg/errors"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
+	internalerrors "github.com/tsamsiyu/themelio/api/internal/errors"
 	"github.com/tsamsiyu/themelio/api/internal/repository/types"
 )
 
@@ -86,21 +89,26 @@ func (r *resourceRepository) Delete(ctx context.Context, key types.ObjectKey, ma
 	}
 
 	ownerRefs := resource.GetOwnerReferences()
-	if len(ownerRefs) == 0 {
-		return r.store.Delete(ctx, key)
-	}
 
 	refOps, err := r.ownerRefOpBuilder.BuildDropOperations(ctx, ownerRefs, key)
 	if err != nil {
 		return errors.Wrap(err, "failed to create owner reference deletion operations")
 	}
 
-	deletionOps, err := r.deletionOpBuilder.BuildDeletionOperations(ctx, key, markDeletionObjectKeys, removeReferencesObjectKeys)
+	deletionOps, err := r.deletionOpBuilder.BuildDeletionOperations(
+		ctx,
+		key,
+		ownerRefs,
+		resource,
+		markDeletionObjectKeys,
+		removeReferencesObjectKeys,
+	)
 	if err != nil {
 		return errors.Wrap(err, "failed to create deletion operations")
 	}
 
 	var ops []clientv3.Op
+	ops = append(ops, clientv3.OpDelete(key.String()))
 	ops = append(ops, refOps...)
 	ops = append(ops, deletionOps...)
 
@@ -120,17 +128,31 @@ func (r *resourceRepository) GetReversedOwnerReferences(
 
 // MarkDeleted marks a resource for deletion by setting deletionTimestamp and adding to deletion collection
 func (r *resourceRepository) MarkDeleted(ctx context.Context, key types.ObjectKey) error {
-	ops, err := r.deletionOpBuilder.BuildMarkDeletionOperations(ctx, key)
+	resource, err := r.store.Get(ctx, key)
+	if err != nil {
+		return errors.Wrap(err, "failed to get resource for deletion marking")
+	}
+
+	if resource.GetDeletionTimestamp() != nil {
+		return nil // Already marked for deletion
+	}
+
+	now := metav1.NewTime(time.Now())
+	resource.SetDeletionTimestamp(&now)
+
+	updatedData, err := r.store.MarshalResource(resource)
+	if err != nil {
+		return internalerrors.NewMarshalingError("failed to marshal resource with deletion timestamp")
+	}
+
+	deletionOp, err := r.deletionOpBuilder.BuildMarkDeletionOperation(ctx, key)
 	if err != nil {
 		return errors.Wrap(err, "failed to build mark deletion operations")
 	}
 
-	if len(ops) == 0 {
-		r.logger.Debug("Resource already marked for deletion", zap.Object("objectKey", key))
-		return nil // Already marked for deletion
-	}
+	updateOp := clientv3.OpPut(key.String(), updatedData)
 
-	return r.store.ExecuteTransaction(ctx, ops)
+	return r.store.ExecuteTransaction(ctx, []clientv3.Op{*deletionOp, updateOp})
 }
 
 // ListDeletions returns all resources marked for deletion

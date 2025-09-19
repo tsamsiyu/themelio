@@ -11,6 +11,9 @@ import (
 	"github.com/tsamsiyu/themelio/api/internal/repository/types"
 )
 
+// the idea of reversed references is to quickly find children resources
+// we don't need reversed references for owner references that are not blocking deletion
+
 type OwnerReferenceOpBuilder struct {
 	store ResourceStore
 }
@@ -87,6 +90,10 @@ func (b *OwnerReferenceOpBuilder) BuildAddOperations(
 	var ops []clientv3.Op
 
 	for _, ownerRef := range ownerRefs {
+		if ownerRef.BlockOwnerDeletion != nil && !*ownerRef.BlockOwnerDeletion {
+			continue
+		}
+
 		parentKey := types.OwnerRefToObjectKey(ownerRef, childKey.Namespace)
 		refKey := fmt.Sprintf("/ref%s", parentKey.String())
 

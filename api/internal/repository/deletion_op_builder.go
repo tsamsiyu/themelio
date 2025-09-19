@@ -4,11 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/pkg/errors"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	internalerrors "github.com/tsamsiyu/themelio/api/internal/errors"
 	"github.com/tsamsiyu/themelio/api/internal/repository/types"
@@ -24,59 +24,35 @@ func NewDeletionOpBuilder(store ResourceStore) *DeletionOpBuilder {
 	}
 }
 
-func (b *DeletionOpBuilder) BuildMarkDeletionOperations(
+func (b *DeletionOpBuilder) BuildMarkDeletionOperation(
 	ctx context.Context,
 	key types.ObjectKey,
-) ([]clientv3.Op, error) {
-	resource, err := b.store.Get(ctx, key)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to get resource for deletion marking")
-	}
-
-	if deletionTimestamp := resource.GetDeletionTimestamp(); deletionTimestamp != nil {
-		return nil, nil // Already marked for deletion
-	}
-
-	now := metav1.NewTime(time.Now())
-	resource.SetDeletionTimestamp(&now)
-
-	var ops []clientv3.Op
-
-	updatedData, err := b.store.MarshalResource(resource)
-	if err != nil {
-		return nil, internalerrors.NewMarshalingError("failed to marshal resource with deletion timestamp")
-	}
-	ops = append(ops, clientv3.OpPut(key.String(), updatedData))
-
+) (*clientv3.Op, error) {
 	deletionKey := fmt.Sprintf("/deletion%s", key.String())
 	deletionRecord := types.NewDeletionRecord(key)
 	deletionData, err := json.Marshal(deletionRecord)
 	if err != nil {
 		return nil, internalerrors.NewMarshalingError("failed to marshal deletion record")
 	}
-	ops = append(ops, clientv3.OpPut(deletionKey, string(deletionData)))
 
-	return ops, nil
+	op := clientv3.OpPut(deletionKey, string(deletionData))
+
+	return &op, nil
 }
 
 func (b *DeletionOpBuilder) BuildDeletionOperations(
 	ctx context.Context,
 	key types.ObjectKey,
+	ownerRefs []metav1.OwnerReference,
+	resource *unstructured.Unstructured,
 	markDeletionObjectKeys []types.ObjectKey,
 	removeReferencesObjectKeys []types.ObjectKey,
 ) ([]clientv3.Op, error) {
-	resource, err := b.store.Get(ctx, key)
-	if err != nil {
-		return nil, err
-	}
-
-	ownerRefs := resource.GetOwnerReferences()
-	if len(ownerRefs) == 0 {
-		return []clientv3.Op{clientv3.OpDelete(key.String())}, nil
-	}
-
 	var ops []clientv3.Op
-	ops = append(ops, clientv3.OpDelete(key.String()))
+
+	if len(ownerRefs) == 0 {
+		return ops, nil
+	}
 
 	for _, childKey := range markDeletionObjectKeys {
 		deletionKey := fmt.Sprintf("/deletion%s", childKey.String())
