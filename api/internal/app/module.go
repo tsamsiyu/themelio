@@ -47,7 +47,7 @@ var APIModule = fx.Options(
 var WorkerModule = fx.Options(
 	CommonModule,
 	fx.Provide(
-		gc.NewGCWorker,
+		gc.NewWorker,
 	),
 )
 

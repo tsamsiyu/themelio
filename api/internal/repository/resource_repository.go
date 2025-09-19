@@ -9,7 +9,7 @@ import (
 	"github.com/pkg/errors"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	internalerrors "github.com/tsamsiyu/themelio/api/internal/errors"
@@ -38,6 +38,7 @@ type ResourceRepository interface {
 	Watch(ctx context.Context, key types.ResourceKey, eventChan chan<- WatchEvent) error
 	MarkDeleted(ctx context.Context, key types.ObjectKey) error
 	ListDeletions(ctx context.Context) ([]types.ObjectKey, error)
+	GetReversedOwnerReferences(ctx context.Context, parentKey types.ObjectKey) (types.ReversedOwnerReferenceSet, error)
 }
 
 type resourceRepository struct {
@@ -60,13 +61,33 @@ func (r *resourceRepository) Replace(ctx context.Context, key types.ObjectKey, r
 		return err
 	}
 
-	_, err = r.client.Put(ctx, etcdKey, data)
+	oldResource, err := r.Get(ctx, key)
 	if err != nil {
-		return errors.Wrap(err, "failed to store resource in etcd")
+		return err
 	}
 
-	r.logger.Debug("Resource stored successfully in etcd",
-		zap.Object("objectKey", key))
+	diff := types.CalculateOwnerReferenceDiff(
+		oldResource.GetOwnerReferences(),
+		resource.GetOwnerReferences(),
+	)
+
+	refOps, err := r.createTxOpsToUpdateReversedOwnerReferences(ctx, diff, key)
+	if err != nil {
+		return errors.Wrap(err, "failed to create reference transaction operations")
+	}
+
+	txn := r.client.Txn(ctx)
+	ops := []clientv3.Op{clientv3.OpPut(etcdKey, data)}
+	ops = append(ops, refOps...)
+
+	txnResp, err := txn.Then(ops...).Commit()
+	if err != nil {
+		return errors.Wrap(err, "failed to execute resource replacement transaction")
+	}
+
+	if !txnResp.Succeeded {
+		return errors.New("resource replacement transaction failed")
+	}
 
 	return nil
 }
@@ -114,17 +135,39 @@ func (r *resourceRepository) List(ctx context.Context, key types.ResourceKey) ([
 func (r *resourceRepository) Delete(ctx context.Context, key types.ObjectKey) error {
 	etcdKey := key.String()
 
-	resp, err := r.client.Delete(ctx, etcdKey)
+	resource, err := r.Get(ctx, key)
 	if err != nil {
-		return errors.Wrap(err, "failed to delete resource from etcd")
+		return err
 	}
 
-	if resp.Deleted == 0 {
-		return NewNotFoundError(key)
+	ownerRefs := resource.GetOwnerReferences()
+	if len(ownerRefs) == 0 {
+		_, err = r.client.Delete(ctx, etcdKey)
+		if err != nil {
+			return errors.Wrap(err, "failed to delete resource from etcd")
+		}
+		return nil
 	}
 
-	r.logger.Debug("Resource deleted successfully from etcd",
-		zap.Object("objectKey", key))
+	refOps, err := r.createTxOpsToDropReversedOwnerReferences(ctx, ownerRefs, key)
+	if err != nil {
+		return errors.Wrap(err, "failed to create owner reference deletion operations")
+	}
+
+	// TODO: remove from "/deletion/"
+
+	txn := r.client.Txn(ctx)
+	ops := []clientv3.Op{clientv3.OpDelete(etcdKey)}
+	ops = append(ops, refOps...)
+
+	txnResp, err := txn.Then(ops...).Commit()
+	if err != nil {
+		return errors.Wrap(err, "failed to execute resource deletion transaction")
+	}
+
+	if !txnResp.Succeeded {
+		return errors.New("resource deletion transaction failed")
+	}
 
 	return nil
 }
@@ -280,7 +323,7 @@ func (r *resourceRepository) MarkDeleted(ctx context.Context, key types.ObjectKe
 		return nil // Already marked for deletion
 	}
 
-	now := v1.NewTime(time.Now())
+	now := metav1.NewTime(time.Now())
 	resource.SetDeletionTimestamp(&now)
 
 	updatedData, err := r.marshalResource(resource)
@@ -345,4 +388,96 @@ func (r *resourceRepository) ListDeletions(ctx context.Context) ([]types.ObjectK
 	}
 
 	return objectKeys, nil
+}
+
+func (r *resourceRepository) GetReversedOwnerReferences(
+	ctx context.Context,
+	parentKey types.ObjectKey,
+) (types.ReversedOwnerReferenceSet, error) {
+	refKey := fmt.Sprintf("/ref%s", parentKey.String())
+
+	resp, err := r.client.Get(ctx, refKey)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get owner references from etcd")
+	}
+
+	childKeys := types.NewReversedOwnerReferenceSet()
+	if len(resp.Kvs) > 0 {
+		childKeys.Decode(string(resp.Kvs[0].Value))
+	}
+
+	return childKeys, nil
+}
+
+func (r *resourceRepository) createTxOpsToUpdateReversedOwnerReferences(
+	ctx context.Context,
+	diff types.OwnerReferenceDiff,
+	childKey types.ObjectKey,
+) ([]clientv3.Op, error) {
+	var ops []clientv3.Op
+
+	deletedOps, err := r.createTxOpsToDropReversedOwnerReferences(ctx, diff.Deleted, childKey)
+	if err != nil {
+		return nil, err
+	}
+	ops = append(ops, deletedOps...)
+
+	createdOps, err := r.createTxOpsToAddReversedOwnerReferences(ctx, diff.Created, childKey)
+	if err != nil {
+		return nil, err
+	}
+	ops = append(ops, createdOps...)
+
+	return ops, nil
+}
+
+func (r *resourceRepository) createTxOpsToDropReversedOwnerReferences(
+	ctx context.Context,
+	ownerRefs []metav1.OwnerReference,
+	childKey types.ObjectKey,
+) ([]clientv3.Op, error) {
+	var ops []clientv3.Op
+
+	for _, ownerRef := range ownerRefs {
+		parentKey := types.OwnerRefToObjectKey(ownerRef, childKey.Namespace)
+		refKey := fmt.Sprintf("/ref%s", parentKey.String())
+
+		currentChildKeys, err := r.GetReversedOwnerReferences(ctx, parentKey)
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed to get current children for parent %s", parentKey.String())
+		}
+
+		currentChildKeys.Delete(childKey.String())
+
+		if len(currentChildKeys) == 0 {
+			ops = append(ops, clientv3.OpDelete(refKey))
+		} else {
+			ops = append(ops, clientv3.OpPut(refKey, currentChildKeys.Encode()))
+		}
+	}
+
+	return ops, nil
+}
+
+func (r *resourceRepository) createTxOpsToAddReversedOwnerReferences(
+	ctx context.Context,
+	ownerRefs []metav1.OwnerReference,
+	childKey types.ObjectKey,
+) ([]clientv3.Op, error) {
+	var ops []clientv3.Op
+
+	for _, ownerRef := range ownerRefs {
+		parentKey := types.OwnerRefToObjectKey(ownerRef, childKey.Namespace)
+		refKey := fmt.Sprintf("/ref%s", parentKey.String())
+
+		currentChildKeys, err := r.GetReversedOwnerReferences(ctx, parentKey)
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed to get current children for parent %s", parentKey.String())
+		}
+
+		currentChildKeys.Put(childKey.String())
+		ops = append(ops, clientv3.OpPut(refKey, currentChildKeys.Encode()))
+	}
+
+	return ops, nil
 }

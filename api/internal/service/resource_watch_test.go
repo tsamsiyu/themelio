@@ -65,6 +65,10 @@ func (m *mockResourceRepository) ListDeletions(ctx context.Context) ([]types.Obj
 	return []types.ObjectKey{}, nil
 }
 
+func (m *mockResourceRepository) GetReversedOwnerReferences(ctx context.Context, parentKey types.ObjectKey) (types.ReversedOwnerReferenceSet, error) {
+	return types.NewReversedOwnerReferenceSet(), nil
+}
+
 func (m *mockResourceRepository) sendEvent(event repository.WatchEvent) {
 	m.watchEvents <- event
 }

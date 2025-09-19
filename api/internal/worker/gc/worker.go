@@ -10,7 +10,7 @@ type Worker struct {
 	logger *zap.Logger
 }
 
-func NewGCWorker(logger *zap.Logger) *Worker {
+func NewWorker(logger *zap.Logger) *Worker {
 	return &Worker{
 		logger: logger,
 	}
