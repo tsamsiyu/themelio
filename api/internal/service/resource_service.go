@@ -11,14 +11,15 @@ import (
 
 	internalerrors "github.com/tsamsiyu/themelio/api/internal/errors"
 	"github.com/tsamsiyu/themelio/api/internal/repository"
+	"github.com/tsamsiyu/themelio/api/internal/repository/types"
 	sharedservice "github.com/tsamsiyu/themelio/api/internal/service/shared"
 )
 
 type ResourceService interface {
-	ReplaceResource(ctx context.Context, objectKey repository.ObjectKey, jsonData []byte) error
-	GetResource(ctx context.Context, objectKey repository.ObjectKey) (*unstructured.Unstructured, error)
-	ListResources(ctx context.Context, objectKey repository.ObjectKey) ([]*unstructured.Unstructured, error)
-	DeleteResource(ctx context.Context, objectKey repository.ObjectKey) error
+	ReplaceResource(ctx context.Context, objectKey types.ObjectKey, jsonData []byte) error
+	GetResource(ctx context.Context, objectKey types.ObjectKey) (*unstructured.Unstructured, error)
+	ListResources(ctx context.Context, resourceKey types.ResourceKey) ([]*unstructured.Unstructured, error)
+	DeleteResource(ctx context.Context, objectKey types.ObjectKey) error
 }
 
 type resourceService struct {
@@ -35,7 +36,7 @@ func NewResourceService(logger *zap.Logger, repo repository.ResourceRepository, 
 	}
 }
 
-func (s *resourceService) ReplaceResource(ctx context.Context, objectKey repository.ObjectKey, jsonData []byte) error {
+func (s *resourceService) ReplaceResource(ctx context.Context, objectKey types.ObjectKey, jsonData []byte) error {
 	resource, err := s.convertJSONToUnstructured(jsonData)
 	if err != nil {
 		return err
@@ -52,15 +53,15 @@ func (s *resourceService) ReplaceResource(ctx context.Context, objectKey reposit
 	return nil
 }
 
-func (s *resourceService) GetResource(ctx context.Context, objectKey repository.ObjectKey) (*unstructured.Unstructured, error) {
+func (s *resourceService) GetResource(ctx context.Context, objectKey types.ObjectKey) (*unstructured.Unstructured, error) {
 	return s.repo.Get(ctx, objectKey)
 }
 
-func (s *resourceService) ListResources(ctx context.Context, objectKey repository.ObjectKey) ([]*unstructured.Unstructured, error) {
-	return s.repo.List(ctx, objectKey)
+func (s *resourceService) ListResources(ctx context.Context, resourceKey types.ResourceKey) ([]*unstructured.Unstructured, error) {
+	return s.repo.List(ctx, resourceKey)
 }
 
-func (s *resourceService) DeleteResource(ctx context.Context, objectKey repository.ObjectKey) error {
+func (s *resourceService) DeleteResource(ctx context.Context, objectKey types.ObjectKey) error {
 	resource, err := s.repo.Get(ctx, objectKey)
 	if err != nil {
 		return err

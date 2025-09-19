@@ -1,4 +1,4 @@
-package repository
+package types
 
 import (
 	"fmt"
@@ -17,7 +17,7 @@ type ObjectKey struct {
 	Name      string
 }
 
-// NewObjectKey creates a new ObjectKey from group, version, kind, namespace, and name
+// NewObjectKey creates a new ObjectKey
 func NewObjectKey(group, version, kind, namespace, name string) ObjectKey {
 	if namespace == "" {
 		namespace = "default"
@@ -56,58 +56,59 @@ func NewObjectKeyFromResource(resource *unstructured.Unstructured) ObjectKey {
 	}
 }
 
-// IsFull returns true if the ObjectKey has a name (for full resource identification)
-func (k ObjectKey) IsFull() bool {
-	return k.Name != ""
+// ToGroupVersionKind returns the GroupVersionKind part of the ObjectKey
+func (k ObjectKey) ToGroupVersionKind() GroupVersionKind {
+	return GroupVersionKind{
+		Group:   k.Group,
+		Version: k.Version,
+		Kind:    k.Kind,
+	}
 }
 
-func (k ObjectKey) ToKeyWithoutName() string {
-	return fmt.Sprintf("/%s/%s/%s/%s", k.Group, k.Version, k.Kind, k.Namespace)
+// ToResourceKey returns the ResourceKey part of the ObjectKey (without name)
+func (k ObjectKey) ToResourceKey() ResourceKey {
+	return ResourceKey{
+		Group:     k.Group,
+		Version:   k.Version,
+		Kind:      k.Kind,
+		Namespace: k.Namespace,
+	}
 }
 
-// ToKey creates a key from the ObjectKey (with leading "/" for etcd compatibility)
 func (k ObjectKey) ToKey() string {
-	if k.Name != "" {
-		return fmt.Sprintf("/%s/%s/%s/%s/%s", k.Group, k.Version, k.Kind, k.Namespace, k.Name)
-	}
-	return fmt.Sprintf("/%s/%s/%s/%s", k.Group, k.Version, k.Kind, k.Namespace)
+	return fmt.Sprintf("/%s/%s/%s/%s/%s", k.Group, k.Version, k.Kind, k.Namespace, k.Name)
 }
 
-// ParseKey parses a key string back to ObjectKey
-func ParseKey(key string) (ObjectKey, error) {
+// ParseObjectKey parses a key string back to ObjectKey (requires all 5 parts)
+func ParseObjectKey(key string) (ObjectKey, error) {
 	key = strings.TrimPrefix(key, "/")
-
 	parts := strings.Split(key, "/")
-	if len(parts) < 4 {
-		return ObjectKey{}, fmt.Errorf("invalid key format: %s", key)
+
+	if len(parts) != 5 {
+		return ObjectKey{}, fmt.Errorf("invalid object key format: expected exactly 5 parts, got %d", len(parts))
 	}
 
-	objKey := ObjectKey{
+	return ObjectKey{
 		Group:     parts[0],
 		Version:   parts[1],
 		Kind:      parts[2],
 		Namespace: parts[3],
-	}
-
-	// If there's a 5th part, it's the name (full resource key)
-	if len(parts) >= 5 {
-		objKey.Name = parts[4]
-	}
-
-	return objKey, nil
+		Name:      parts[4],
+	}, nil
 }
 
-// HasPrefix checks if the given watch key is a prefix of this ObjectKey
-func (k ObjectKey) HasPrefix(watchKey string) bool {
-	return strings.HasPrefix(k.ToKey(), watchKey)
+// HasPrefix checks if the given key is a prefix of this ObjectKey
+func (k ObjectKey) HasPrefix(prefix string) bool {
+	keyStr := k.ToKey()
+	return strings.HasPrefix(keyStr, prefix)
 }
 
-// String returns a string representation of the ObjectKey
+// String returns the string representation of the ObjectKey
 func (k ObjectKey) String() string {
 	return k.ToKey()
 }
 
-// MarshalLogObject implements zapcore.ObjectMarshaler interface
+// MarshalLogObject implements zapcore.ObjectMarshaler for structured logging
 func (k ObjectKey) MarshalLogObject(enc zapcore.ObjectEncoder) error {
 	enc.AddString("group", k.Group)
 	enc.AddString("version", k.Version)

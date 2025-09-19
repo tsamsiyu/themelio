@@ -11,6 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	internalerrors "github.com/tsamsiyu/themelio/api/internal/errors"
+	"github.com/tsamsiyu/themelio/api/internal/repository/types"
 )
 
 type WatchEventType string
@@ -28,11 +29,11 @@ type WatchEvent struct {
 }
 
 type ResourceRepository interface {
-	Replace(ctx context.Context, key ObjectKey, resource *unstructured.Unstructured) error
-	Get(ctx context.Context, key ObjectKey) (*unstructured.Unstructured, error)
-	List(ctx context.Context, key ObjectKey) ([]*unstructured.Unstructured, error)
-	Delete(ctx context.Context, key ObjectKey) error
-	Watch(ctx context.Context, key ObjectKey, eventChan chan<- WatchEvent) error
+	Replace(ctx context.Context, key types.ObjectKey, resource *unstructured.Unstructured) error
+	Get(ctx context.Context, key types.ObjectKey) (*unstructured.Unstructured, error)
+	List(ctx context.Context, key types.ResourceKey) ([]*unstructured.Unstructured, error)
+	Delete(ctx context.Context, key types.ObjectKey) error
+	Watch(ctx context.Context, key types.ResourceKey, eventChan chan<- WatchEvent) error
 }
 
 type resourceRepository struct {
@@ -47,7 +48,7 @@ func NewResourceRepository(logger *zap.Logger, client *clientv3.Client) Resource
 	}
 }
 
-func (r *resourceRepository) Replace(ctx context.Context, key ObjectKey, resource *unstructured.Unstructured) error {
+func (r *resourceRepository) Replace(ctx context.Context, key types.ObjectKey, resource *unstructured.Unstructured) error {
 	etcdKey := key.ToKey()
 
 	data, err := r.marshalResource(resource)
@@ -66,7 +67,7 @@ func (r *resourceRepository) Replace(ctx context.Context, key ObjectKey, resourc
 	return nil
 }
 
-func (r *resourceRepository) Get(ctx context.Context, key ObjectKey) (*unstructured.Unstructured, error) {
+func (r *resourceRepository) Get(ctx context.Context, key types.ObjectKey) (*unstructured.Unstructured, error) {
 	etcdKey := key.ToKey()
 
 	resp, err := r.client.Get(ctx, etcdKey)
@@ -86,7 +87,7 @@ func (r *resourceRepository) Get(ctx context.Context, key ObjectKey) (*unstructu
 	return resource, nil
 }
 
-func (r *resourceRepository) List(ctx context.Context, key ObjectKey) ([]*unstructured.Unstructured, error) {
+func (r *resourceRepository) List(ctx context.Context, key types.ResourceKey) ([]*unstructured.Unstructured, error) {
 	prefix := key.ToKey()
 
 	resp, err := r.client.Get(ctx, prefix, clientv3.WithPrefix())
@@ -106,7 +107,7 @@ func (r *resourceRepository) List(ctx context.Context, key ObjectKey) ([]*unstru
 	return resources, nil
 }
 
-func (r *resourceRepository) Delete(ctx context.Context, key ObjectKey) error {
+func (r *resourceRepository) Delete(ctx context.Context, key types.ObjectKey) error {
 	etcdKey := key.ToKey()
 
 	resp, err := r.client.Delete(ctx, etcdKey)
@@ -141,7 +142,7 @@ func (r *resourceRepository) unmarshalResource(data []byte) (*unstructured.Unstr
 	return &obj, nil
 }
 
-func (r *resourceRepository) Watch(ctx context.Context, key ObjectKey, eventChan chan<- WatchEvent) error {
+func (r *resourceRepository) Watch(ctx context.Context, key types.ResourceKey, eventChan chan<- WatchEvent) error {
 	prefix := key.ToKey()
 
 	go r.watchResources(ctx, prefix, eventChan)
@@ -227,7 +228,7 @@ func (r *resourceRepository) convertEtcdEventToWatchEvent(ev *clientv3.Event) (W
 			}
 			event.Object = resource
 		} else {
-			objectKey, err := ParseKey(string(ev.Kv.Key))
+			objectKey, err := types.ParseObjectKey(string(ev.Kv.Key))
 			if err != nil {
 				return event, errors.Wrap(err, "failed to parse etcd key")
 			}

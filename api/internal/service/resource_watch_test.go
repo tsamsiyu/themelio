@@ -9,6 +9,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"github.com/tsamsiyu/themelio/api/internal/repository"
+	"github.com/tsamsiyu/themelio/api/internal/repository/types"
 )
 
 // mockResourceRepository is a mock implementation of ResourceRepository for testing
@@ -26,23 +27,23 @@ func newMockResourceRepository() *mockResourceRepository {
 	}
 }
 
-func (m *mockResourceRepository) Replace(ctx context.Context, key repository.ObjectKey, resource *unstructured.Unstructured) error {
+func (m *mockResourceRepository) Replace(ctx context.Context, key types.ObjectKey, resource *unstructured.Unstructured) error {
 	return nil
 }
 
-func (m *mockResourceRepository) Get(ctx context.Context, key repository.ObjectKey) (*unstructured.Unstructured, error) {
+func (m *mockResourceRepository) Get(ctx context.Context, key types.ObjectKey) (*unstructured.Unstructured, error) {
 	return nil, nil
 }
 
-func (m *mockResourceRepository) List(ctx context.Context, key repository.ObjectKey) ([]*unstructured.Unstructured, error) {
+func (m *mockResourceRepository) List(ctx context.Context, key types.ResourceKey) ([]*unstructured.Unstructured, error) {
 	return m.listResult, m.listError
 }
 
-func (m *mockResourceRepository) Delete(ctx context.Context, key repository.ObjectKey) error {
+func (m *mockResourceRepository) Delete(ctx context.Context, key types.ObjectKey) error {
 	return nil
 }
 
-func (m *mockResourceRepository) Watch(ctx context.Context, key repository.ObjectKey, eventChan chan<- repository.WatchEvent) error {
+func (m *mockResourceRepository) Watch(ctx context.Context, key types.ResourceKey, eventChan chan<- repository.WatchEvent) error {
 	go func() {
 		for event := range m.watchEvents {
 			select {
@@ -80,26 +81,25 @@ func TestResourceWatchService_Watch(t *testing.T) {
 	service := NewResourceWatchService(logger, mockRepo, config)
 	defer close(service.stopChan)
 
-	objectKey := repository.ObjectKey{
+	resourceKey := types.ResourceKey{
 		Group:     "test",
 		Version:   "v1",
 		Kind:      "TestResource",
 		Namespace: "default",
-		Name:      "",
 	}
 
 	// Test basic watch functionality
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
 
-	eventChan := service.Watch(ctx, objectKey)
+	eventChan := service.Watch(ctx, resourceKey)
 
 	// Send a test event
 	testResource := &unstructured.Unstructured{}
 	testResource.SetAPIVersion("test/v1")
 	testResource.SetKind("TestResource")
 	testResource.SetName("test-resource")
-	testResource.SetNamespace(objectKey.Namespace)
+	testResource.SetNamespace(resourceKey.Namespace)
 	testResource.SetResourceVersion("1")
 
 	testEvent := repository.WatchEvent{
@@ -136,27 +136,26 @@ func TestResourceWatchService_MultipleClients(t *testing.T) {
 	service := NewResourceWatchService(logger, mockRepo, config)
 	defer close(service.stopChan)
 
-	objectKey := repository.ObjectKey{
+	resourceKey := types.ResourceKey{
 		Group:     "test",
 		Version:   "v1",
 		Kind:      "TestResource",
 		Namespace: "default",
-		Name:      "",
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
 
 	// Create multiple clients watching the same resources
-	client1Chan := service.Watch(ctx, objectKey)
-	client2Chan := service.Watch(ctx, objectKey)
+	client1Chan := service.Watch(ctx, resourceKey)
+	client2Chan := service.Watch(ctx, resourceKey)
 
 	// Send a test event
 	testResource := &unstructured.Unstructured{}
 	testResource.SetAPIVersion("test/v1")
 	testResource.SetKind("TestResource")
 	testResource.SetName("test-resource")
-	testResource.SetNamespace(objectKey.Namespace)
+	testResource.SetNamespace(resourceKey.Namespace)
 	testResource.SetResourceVersion("1")
 
 	testEvent := repository.WatchEvent{
@@ -211,25 +210,24 @@ func TestResourceWatchService_EventReconciliation(t *testing.T) {
 	service := NewResourceWatchService(logger, mockRepo, config)
 	defer close(service.stopChan)
 
-	objectKey := repository.ObjectKey{
+	resourceKey := types.ResourceKey{
 		Group:     "test",
 		Version:   "v1",
 		Kind:      "TestResource",
 		Namespace: "default",
-		Name:      "",
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	eventChan := service.Watch(ctx, objectKey)
+	eventChan := service.Watch(ctx, resourceKey)
 
 	// First, send an initial event to populate the cache
 	initialResource := &unstructured.Unstructured{}
 	initialResource.SetAPIVersion("test/v1")
 	initialResource.SetKind("TestResource")
 	initialResource.SetName("initial-resource")
-	initialResource.SetNamespace(objectKey.Namespace)
+	initialResource.SetNamespace(resourceKey.Namespace)
 	initialResource.SetResourceVersion("1")
 
 	initialEvent := repository.WatchEvent{
@@ -256,7 +254,7 @@ func TestResourceWatchService_EventReconciliation(t *testing.T) {
 	testResource.SetAPIVersion("test/v1")
 	testResource.SetKind("TestResource")
 	testResource.SetName("reconciled-resource")
-	testResource.SetNamespace(objectKey.Namespace)
+	testResource.SetNamespace(resourceKey.Namespace)
 	testResource.SetResourceVersion("2")
 
 	mockRepo.setListResult([]*unstructured.Unstructured{testResource})

@@ -10,16 +10,16 @@ import (
 	"k8s.io/apiextensions-apiserver/pkg/apiserver/validation"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"github.com/tsamsiyu/themelio/api/internal/errors"
 	"github.com/tsamsiyu/themelio/api/internal/repository"
+	"github.com/tsamsiyu/themelio/api/internal/repository/types"
 )
 
 type SchemaService interface {
-	GetSchema(ctx context.Context, gvk schema.GroupVersionKind) (*apiextensions.JSONSchemaProps, error)
+	GetSchema(ctx context.Context, gvk types.GroupVersionKind) (*apiextensions.JSONSchemaProps, error)
 	ValidateResource(ctx context.Context, obj runtime.Object) error
-	StoreSchema(ctx context.Context, gvk schema.GroupVersionKind, schema *apiextensions.JSONSchemaProps) error
+	StoreSchema(ctx context.Context, gvk types.GroupVersionKind, schema *apiextensions.JSONSchemaProps) error
 }
 
 type schemaService struct {
@@ -34,12 +34,13 @@ func NewSchemaService(logger *zap.Logger, repo repository.SchemaRepository) Sche
 	}
 }
 
-func (s *schemaService) GetSchema(ctx context.Context, gvk schema.GroupVersionKind) (*apiextensions.JSONSchemaProps, error) {
+func (s *schemaService) GetSchema(ctx context.Context, gvk types.GroupVersionKind) (*apiextensions.JSONSchemaProps, error) {
 	return s.repo.GetSchema(ctx, gvk)
 }
 
 func (s *schemaService) ValidateResource(ctx context.Context, obj runtime.Object) error {
-	gvk := obj.GetObjectKind().GroupVersionKind()
+	k8sGVK := obj.GetObjectKind().GroupVersionKind()
+	gvk := types.NewGroupVersionKind(k8sGVK.Group, k8sGVK.Version, k8sGVK.Kind)
 
 	schema, err := s.GetSchema(ctx, gvk)
 	if err != nil {
@@ -69,6 +70,6 @@ func (s *schemaService) ValidateResource(ctx context.Context, obj runtime.Object
 	return nil
 }
 
-func (s *schemaService) StoreSchema(ctx context.Context, gvk schema.GroupVersionKind, schema *apiextensions.JSONSchemaProps) error {
+func (s *schemaService) StoreSchema(ctx context.Context, gvk types.GroupVersionKind, schema *apiextensions.JSONSchemaProps) error {
 	return s.repo.StoreSchema(ctx, gvk, schema)
 }

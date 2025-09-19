@@ -9,14 +9,14 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 	"k8s.io/apiextensions-apiserver/pkg/apis/apiextensions"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	internalerrors "github.com/tsamsiyu/themelio/api/internal/errors"
+	"github.com/tsamsiyu/themelio/api/internal/repository/types"
 )
 
 type SchemaRepository interface {
-	GetSchema(ctx context.Context, gvk schema.GroupVersionKind) (*apiextensions.JSONSchemaProps, error)
-	StoreSchema(ctx context.Context, gvk schema.GroupVersionKind, schema *apiextensions.JSONSchemaProps) error
+	GetSchema(ctx context.Context, gvk types.GroupVersionKind) (*apiextensions.JSONSchemaProps, error)
+	StoreSchema(ctx context.Context, gvk types.GroupVersionKind, schema *apiextensions.JSONSchemaProps) error
 }
 
 type schemaRepository struct {
@@ -31,7 +31,7 @@ func NewSchemaRepository(logger *zap.Logger, etcdClient *clientv3.Client) Schema
 	}
 }
 
-func (r *schemaRepository) GetSchema(ctx context.Context, gvk schema.GroupVersionKind) (*apiextensions.JSONSchemaProps, error) {
+func (r *schemaRepository) GetSchema(ctx context.Context, gvk types.GroupVersionKind) (*apiextensions.JSONSchemaProps, error) {
 	key := r.getSchemaKey(gvk)
 
 	resp, err := r.etcdClient.Get(ctx, key)
@@ -51,7 +51,7 @@ func (r *schemaRepository) GetSchema(ctx context.Context, gvk schema.GroupVersio
 	return &schema, nil
 }
 
-func (r *schemaRepository) StoreSchema(ctx context.Context, gvk schema.GroupVersionKind, schema *apiextensions.JSONSchemaProps) error {
+func (r *schemaRepository) StoreSchema(ctx context.Context, gvk types.GroupVersionKind, schema *apiextensions.JSONSchemaProps) error {
 	key := r.getSchemaKey(gvk)
 
 	schemaData, err := json.Marshal(schema)
@@ -64,15 +64,12 @@ func (r *schemaRepository) StoreSchema(ctx context.Context, gvk schema.GroupVers
 		return errors.Wrap(err, "failed to store schema in etcd")
 	}
 
-	r.logger.Info("Schema stored successfully",
-		zap.String("group", gvk.Group),
-		zap.String("version", gvk.Version),
-		zap.String("kind", gvk.Kind))
+	r.logger.Info("Schema stored successfully", zap.Object("gvk", gvk))
 
 	return nil
 }
 
-func (r *schemaRepository) getSchemaKey(gvk schema.GroupVersionKind) string {
+func (r *schemaRepository) getSchemaKey(gvk types.GroupVersionKind) string {
 	group := gvk.Group
 	if group == "" {
 		group = "core"

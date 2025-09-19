@@ -9,6 +9,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"github.com/tsamsiyu/themelio/api/internal/repository"
+	"github.com/tsamsiyu/themelio/api/internal/repository/types"
 )
 
 const WATCH_BUFFER_SIZE = 100
@@ -46,13 +47,13 @@ type ResourceWatchService struct {
 	repo   repository.ResourceRepository
 
 	// each entry is the cache entry for the given object key
-	cache sync.Map // key: repository.ObjectKey, value: *ResourceCacheEntry
+	cache sync.Map // key: types.ObjectKey, value: *ResourceCacheEntry
 
 	// each entry is the list of clients listening to the same watch key
-	clients sync.Map // key: repository.ObjectKey, value: []chan<- repository.WatchEvent
+	clients sync.Map // key: types.ObjectKey, value: []chan<- repository.WatchEvent
 
 	// each entry is the repository channel for the given watch key
-	subscriptions map[string]chan repository.WatchEvent // key: repository.ObjectKey, value: repository channel
+	subscriptions map[string]chan repository.WatchEvent // key: types.ObjectKey, value: repository channel
 
 	stopChan chan struct{}
 
@@ -80,8 +81,8 @@ func NewResourceWatchService(logger *zap.Logger, repo repository.ResourceReposit
 	return service
 }
 
-func (s *ResourceWatchService) Watch(ctx context.Context, objectKey repository.ObjectKey) <-chan repository.WatchEvent {
-	watchKey := objectKey.ToKey()
+func (s *ResourceWatchService) Watch(ctx context.Context, resourceKey types.ResourceKey) <-chan repository.WatchEvent {
+	watchKey := resourceKey.ToKey()
 
 	clientChan := make(chan repository.WatchEvent, WATCH_BUFFER_SIZE)
 
@@ -92,18 +93,20 @@ func (s *ResourceWatchService) Watch(ctx context.Context, objectKey repository.O
 	s.clients.Store(watchKey, clients)
 
 	if len(clients) == 1 { // first client for this key
-		s.subscribe(ctx, watchKey, objectKey)
+		s.subscribe(ctx, resourceKey)
 	}
 
 	return clientChan
 }
 
-func (s *ResourceWatchService) subscribe(ctx context.Context, watchKey string, objectKey repository.ObjectKey) {
+func (s *ResourceWatchService) subscribe(ctx context.Context, resourceKey types.ResourceKey) {
+	watchKey := resourceKey.ToKey()
+
 	subscriptionChan := make(chan repository.WatchEvent)
 
 	s.subscriptions[watchKey] = subscriptionChan
 
-	s.repo.Watch(ctx, objectKey, subscriptionChan)
+	s.repo.Watch(ctx, resourceKey, subscriptionChan)
 
 	go s.forwardEvents(watchKey, subscriptionChan)
 }
@@ -134,7 +137,7 @@ func (s *ResourceWatchService) updateCacheFromEvent(event repository.WatchEvent)
 		return
 	}
 
-	objectKey := repository.NewObjectKeyFromResource(event.Object)
+	objectKey := types.NewObjectKeyFromResource(event.Object)
 	now := time.Now()
 
 	switch event.Type {
@@ -167,7 +170,7 @@ func (s *ResourceWatchService) backgroundProcess() {
 func (s *ResourceWatchService) pollAndReconcile() {
 	s.clients.Range(func(watchKeyInterface, _ interface{}) bool {
 		watchKeyString := watchKeyInterface.(string)
-		watchKey, err := repository.ParseKey(watchKeyString)
+		resourceKey, err := types.ParseResourceKey(watchKeyString)
 		if err != nil {
 			s.logger.Error("Invalid watch key", zap.String("watchKey", watchKeyString), zap.Error(err))
 			return true
@@ -176,11 +179,11 @@ func (s *ResourceWatchService) pollAndReconcile() {
 		ctx, cancel := context.WithTimeout(context.Background(), MAX_QUERY_TIMEOUT)
 		defer cancel()
 
-		latestState, err := s.repo.List(ctx, watchKey)
+		latestState, err := s.repo.List(ctx, resourceKey)
 
 		if err != nil {
 			s.logger.Error("Failed to list resources during reconciliation",
-				zap.Object("objectKey", watchKey),
+				zap.Object("resourceKey", resourceKey),
 				zap.Error(err))
 			return true
 		}
@@ -194,14 +197,14 @@ func (s *ResourceWatchService) pollAndReconcile() {
 
 // compareAndGenerateEvents compares current resources with cache and generates missing events
 func (s *ResourceWatchService) compareAndGenerateEvents(watchKey string, latestState []*unstructured.Unstructured) {
-	latestStateMap := make(map[repository.ObjectKey]*unstructured.Unstructured)
+	latestStateMap := make(map[types.ObjectKey]*unstructured.Unstructured)
 	for _, resource := range latestState {
-		objectKey := repository.NewObjectKeyFromResource(resource)
+		objectKey := types.NewObjectKeyFromResource(resource)
 		latestStateMap[objectKey] = resource
 	}
 
 	s.cache.Range(func(key, value interface{}) bool {
-		objectKey := key.(repository.ObjectKey)
+		objectKey := key.(types.ObjectKey)
 		if _, exists := latestStateMap[objectKey]; !exists {
 			deletedObject := &unstructured.Unstructured{
 				Object: map[string]interface{}{
@@ -251,24 +254,24 @@ func (s *ResourceWatchService) compareAndGenerateEvents(watchKey string, latestS
 func (s *ResourceWatchService) updateCache(resources []*unstructured.Unstructured) {
 	now := time.Now()
 
-	keys := make(map[string]bool)
+	snapshot := make(map[string]*ResourceCacheEntry)
 	s.cache.Range(func(key, value interface{}) bool {
-		objectKey := key.(repository.ObjectKey)
-		keys[objectKey.ToKey()] = true
+		objectKey := key.(types.ObjectKey)
+		snapshot[objectKey.String()] = value.(*ResourceCacheEntry)
 		return true
 	})
 
 	for _, resource := range resources {
-		objectKey := repository.NewObjectKeyFromResource(resource)
-		s.cache.Store(objectKey, &ResourceCacheEntry{
+		key := types.NewObjectKeyFromResource(resource).String()
+		s.cache.CompareAndSwap(key, snapshot[key], &ResourceCacheEntry{
 			ResourceVersion: resource.GetResourceVersion(),
 			LastSeen:        now,
 		})
-		delete(keys, objectKey.ToKey())
+		delete(snapshot, key)
 	}
 
-	for key := range keys {
-		s.cache.Delete(key)
+	for key := range snapshot {
+		s.cache.CompareAndDelete(key, snapshot[key])
 	}
 }
 

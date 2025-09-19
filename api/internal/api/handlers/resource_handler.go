@@ -8,7 +8,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/tsamsiyu/themelio/api/internal/api/errors"
-	"github.com/tsamsiyu/themelio/api/internal/repository"
+	"github.com/tsamsiyu/themelio/api/internal/repository/types"
 	"github.com/tsamsiyu/themelio/api/internal/service"
 )
 
@@ -62,8 +62,9 @@ func (h *ResourceHandler) GetResource(c *gin.Context) {
 
 func (h *ResourceHandler) ListResources(c *gin.Context) {
 	objectKey := h.getObjectKeyFromParams(c)
+	resourceKey := objectKey.ToResourceKey()
 
-	resources, err := h.resourceService.ListResources(c.Request.Context(), objectKey)
+	resources, err := h.resourceService.ListResources(c.Request.Context(), resourceKey)
 	if err != nil {
 		c.Error(err)
 		return
@@ -89,12 +90,12 @@ func (h *ResourceHandler) DeleteResource(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Resource deleted successfully"})
 }
 
-func (h *ResourceHandler) getObjectKeyFromParams(c *gin.Context) repository.ObjectKey {
+func (h *ResourceHandler) getObjectKeyFromParams(c *gin.Context) types.ObjectKey {
 	group := c.Param("group")
 	version := c.Param("version")
 	kind := c.Param("kind")
 	namespace := c.Param("namespace")
 	name := c.Param("name")
 
-	return repository.NewObjectKey(group, version, kind, namespace, name)
+	return types.NewObjectKey(group, version, kind, namespace, name)
 }
