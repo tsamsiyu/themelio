@@ -117,7 +117,7 @@ func (b *OwnerReferenceOpBuilder) GetReversedOwnerReferences(
 	refKey := fmt.Sprintf("/ref%s", parentKey.String())
 
 	data, err := b.store.GetRaw(ctx, refKey)
-	if err != nil && !IsNotFoundError(err) {
+	if err != nil && !types.IsNotFoundError(err) {
 		return nil, errors.Wrap(err, "failed to get owner references from etcd")
 	}
 

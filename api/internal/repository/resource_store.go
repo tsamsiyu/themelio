@@ -77,7 +77,7 @@ func (s *resourceStore) Get(ctx context.Context, key types.ObjectKey) (*unstruct
 	}
 
 	if len(resp.Kvs) == 0 {
-		return nil, NewNotFoundError(key.String())
+		return nil, types.NewNotFoundError(key.String())
 	}
 
 	return s.unmarshalResource(resp.Kvs[0].Value)
@@ -95,7 +95,7 @@ func (s *resourceStore) GetRaw(ctx context.Context, key string) ([]byte, error) 
 	}
 
 	if len(resp.Kvs) == 0 {
-		return nil, NewNotFoundError(key)
+		return nil, types.NewNotFoundError(key)
 	}
 
 	return resp.Kvs[0].Value, nil

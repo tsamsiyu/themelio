@@ -9,7 +9,7 @@ import (
 
 	apierrors "github.com/tsamsiyu/themelio/api/internal/api/errors"
 	"github.com/tsamsiyu/themelio/api/internal/errors"
-	"github.com/tsamsiyu/themelio/api/internal/repository"
+	repositorytypes "github.com/tsamsiyu/themelio/api/internal/repository/types"
 )
 
 // ErrorMapper maps errors from different layers to appropriate HTTP responses
@@ -45,7 +45,7 @@ func mapError(err error, logger *zap.Logger) (int, interface{}) {
 		return http.StatusBadRequest, gin.H{
 			"error": e.Error(),
 		}
-	case *repository.NotFoundError:
+	case *repositorytypes.NotFoundError:
 		return http.StatusNotFound, gin.H{"error": e.Error()}
 	case *errors.MarshalingError:
 		logger.Error("Marshaling error", zap.String("message", e.Message))

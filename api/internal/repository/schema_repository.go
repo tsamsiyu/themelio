@@ -37,7 +37,7 @@ func (r *schemaRepository) GetSchema(ctx context.Context, gvk types.GroupVersion
 	}
 
 	if len(resp.Kvs) == 0 {
-		return nil, NewNotFoundError(gvk.String())
+		return nil, types.NewNotFoundError(gvk.String())
 	}
 
 	var schema apiextensions.JSONSchemaProps
