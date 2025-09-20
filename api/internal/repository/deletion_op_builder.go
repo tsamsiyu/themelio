@@ -8,25 +8,28 @@ import (
 
 	"github.com/pkg/errors"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	metaTypes "k8s.io/apimachinery/pkg/types"
 
 	internalerrors "github.com/tsamsiyu/themelio/api/internal/errors"
 	"github.com/tsamsiyu/themelio/api/internal/repository/types"
 )
 
 type DeletionOpBuilder struct {
-	store ResourceStore
+	store  ResourceStore
+	logger *zap.Logger
 }
 
-func NewDeletionOpBuilder(store ResourceStore) *DeletionOpBuilder {
+func NewDeletionOpBuilder(store ResourceStore, logger *zap.Logger) *DeletionOpBuilder {
 	return &DeletionOpBuilder{
-		store: store,
+		store:  store,
+		logger: logger,
 	}
 }
 
 func (b *DeletionOpBuilder) BuildMarkDeletionOperation(
-	ctx context.Context,
 	key types.ObjectKey,
 ) (*clientv3.Op, error) {
 	deletionKey := fmt.Sprintf("/deletion%s", key.String())
@@ -41,59 +44,130 @@ func (b *DeletionOpBuilder) BuildMarkDeletionOperation(
 	return &op, nil
 }
 
-func (b *DeletionOpBuilder) BuildDeletionOperations(
+// BuildChildrenCleanupOperations builds all operations needed to clean up children of a resource
+func (b *DeletionOpBuilder) BuildChildrenCleanupOperations(
 	ctx context.Context,
 	key types.ObjectKey,
-	ownerRefs []metav1.OwnerReference,
 	resource *unstructured.Unstructured,
-	markDeletionObjectKeys []types.ObjectKey,
-	removeReferencesObjectKeys []types.ObjectKey,
+	reversedOwnerRefs types.ReversedOwnerReferenceSet,
 ) ([]clientv3.Op, error) {
-	var ops []clientv3.Op
+	var allOps []clientv3.Op
 
-	if len(ownerRefs) == 0 {
-		return ops, nil
+	childResources, err := b.queryChildResources(ctx, reversedOwnerRefs, key)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to query child resources")
 	}
 
-	for _, childKey := range markDeletionObjectKeys {
-		deletionKey := fmt.Sprintf("/deletion%s", childKey.String())
-		deletionRecord := types.NewDeletionRecord(childKey)
-		deletionData, err := json.Marshal(deletionRecord)
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to marshal deletion record")
-		}
-		ops = append(ops, clientv3.OpPut(deletionKey, string(deletionData)))
+	refCleanupOps, err := b.buildChildrenReferenceCleanupOps(resource, childResources)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to build children reference cleanup operations")
 	}
+	allOps = append(allOps, refCleanupOps...)
 
-	for _, childKey := range removeReferencesObjectKeys {
-		child, err := b.store.Get(ctx, childKey)
+	markDeletionOps, err := b.buildChildrenMarkDeletionOps(resource, childResources)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to build children mark deletion operations")
+	}
+	allOps = append(allOps, markDeletionOps...)
+
+	return allOps, nil
+}
+
+// queryChildResources queries all child resources once to avoid duplicate queries
+func (b *DeletionOpBuilder) queryChildResources(
+	ctx context.Context,
+	reversedOwnerRefs types.ReversedOwnerReferenceSet,
+	parentKey types.ObjectKey,
+) (map[string]*unstructured.Unstructured, error) {
+	childResources := make(map[string]*unstructured.Unstructured)
+
+	for childKeyStr := range reversedOwnerRefs {
+		childKey, err := types.ParseObjectKey(childKeyStr)
 		if err != nil {
-			return nil, errors.Wrap(err, "failed to get child for owner reference removal")
-		}
-
-		if child == nil {
+			b.logger.Error("Failed to parse child object key",
+				zap.String("childKey", childKeyStr),
+				zap.String("parentKey", parentKey.String()),
+				zap.Error(err))
 			continue
 		}
 
-		ownerRefs := child.GetOwnerReferences()
-		var newOwnerRefs []metav1.OwnerReference
-		for _, ref := range ownerRefs {
-			refKey := types.OwnerRefToObjectKey(ref, childKey.Namespace)
-			if refKey.String() != key.String() {
-				newOwnerRefs = append(newOwnerRefs, ref)
-			}
-		}
-		child.SetOwnerReferences(newOwnerRefs)
-
-		updatedData, err := b.store.MarshalResource(child)
+		child, err := b.store.Get(ctx, childKey)
 		if err != nil {
-			return nil, errors.Wrap(err, "failed to marshal updated child resource")
+			b.logger.Error("Failed to get child resource",
+				zap.String("childKey", childKeyStr),
+				zap.String("parentKey", parentKey.String()),
+				zap.Error(err))
+			continue
 		}
-		ops = append(ops, clientv3.OpPut(childKey.String(), updatedData))
+
+		if child == nil {
+			b.logger.Warn("child resource not found by reversed reference",
+				zap.String("childKey", childKeyStr),
+				zap.String("parentKey", parentKey.String()))
+			continue
+		}
+
+		childResources[childKeyStr] = child
 	}
 
-	deletionKey := fmt.Sprintf("/deletion%s", key.String())
-	ops = append(ops, clientv3.OpDelete(deletionKey))
+	return childResources, nil
+}
+
+// buildChildrenReferenceCleanupOps builds operations to remove owner references from children
+func (b *DeletionOpBuilder) buildChildrenReferenceCleanupOps(
+	resource *unstructured.Unstructured,
+	childResources map[string]*unstructured.Unstructured,
+) ([]clientv3.Op, error) {
+	var ops []clientv3.Op
+
+	for childKeyStr, child := range childResources {
+		childKey, err := types.ParseObjectKey(childKeyStr)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to parse child key")
+		}
+
+		childOwnerRefs := child.GetOwnerReferences()
+		hasBlockingParent := hasOtherBlockingReference(childOwnerRefs, resource.GetUID())
+
+		if hasBlockingParent {
+			newOwnerRefs := removeOwnerReference(childOwnerRefs, resource.GetUID())
+			child.SetOwnerReferences(newOwnerRefs)
+
+			updatedData, err := b.store.MarshalResource(child)
+			if err != nil {
+				return nil, errors.Wrap(err, "failed to marshal updated child resource")
+			}
+			ops = append(ops, clientv3.OpPut(childKey.String(), updatedData))
+		}
+	}
+
+	return ops, nil
+}
+
+// buildChildrenMarkDeletionOps builds operations to mark children for deletion
+func (b *DeletionOpBuilder) buildChildrenMarkDeletionOps(
+	resource *unstructured.Unstructured,
+	childResources map[string]*unstructured.Unstructured,
+) ([]clientv3.Op, error) {
+	var ops []clientv3.Op
+
+	for childKeyStr, child := range childResources {
+		childKey, err := types.ParseObjectKey(childKeyStr)
+		if err != nil {
+			continue
+		}
+
+		childOwnerRefs := child.GetOwnerReferences()
+		hasBlockingParent := hasOtherBlockingReference(childOwnerRefs, resource.GetUID())
+
+		if !hasBlockingParent {
+			deletionOp, err := b.BuildMarkDeletionOperation(childKey)
+			if err != nil {
+				return nil, errors.Wrap(err, "failed to build mark deletion operation for child")
+			}
+			ops = append(ops, *deletionOp)
+		}
+	}
 
 	return ops, nil
 }
@@ -160,4 +234,29 @@ func (b *DeletionOpBuilder) AcquireDeletions(ctx context.Context, lockKey string
 	}
 
 	return &types.DeletionBatch{ObjectKeys: objectKeys, LeaseID: leaseResp.ID}, nil
+}
+
+func removeOwnerReference(ownerRefs []metav1.OwnerReference, exceptID metaTypes.UID) []metav1.OwnerReference {
+	var newOwnerRefs []metav1.OwnerReference
+	for _, ownerRef := range ownerRefs {
+		if ownerRef.UID == exceptID {
+			continue
+		}
+		newOwnerRefs = append(newOwnerRefs, ownerRef)
+	}
+
+	return newOwnerRefs
+}
+
+func hasOtherBlockingReference(childOwnerRefs []metav1.OwnerReference, exceptID metaTypes.UID) bool {
+	for _, ownerRef := range childOwnerRefs {
+		if ownerRef.UID == exceptID {
+			continue
+		}
+		if ownerRef.BlockOwnerDeletion != nil && *ownerRef.BlockOwnerDeletion {
+			return true
+		}
+	}
+
+	return false
 }

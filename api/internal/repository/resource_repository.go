@@ -19,7 +19,7 @@ type ResourceRepository interface {
 	Replace(ctx context.Context, key types.ObjectKey, resource *unstructured.Unstructured) error
 	Get(ctx context.Context, key types.ObjectKey) (*unstructured.Unstructured, error)
 	List(ctx context.Context, key types.ResourceKey, limit int) ([]*unstructured.Unstructured, error)
-	Delete(ctx context.Context, key types.ObjectKey, markDeletionObjectKeys []types.ObjectKey, removeReferencesObjectKeys []types.ObjectKey) error
+	Delete(ctx context.Context, key types.ObjectKey) error
 	Watch(ctx context.Context, key types.DbKey, eventChan chan<- types.WatchEvent) error
 	MarkDeleted(ctx context.Context, key types.ObjectKey) error
 	ListDeletions(ctx context.Context, lockKey string, lockExp time.Duration, batchLimit int) (*types.DeletionBatch, error)
@@ -36,7 +36,7 @@ type resourceRepository struct {
 
 func NewResourceRepository(logger *zap.Logger, store ResourceStore, watchConfig WatchConfig, backoffManager *lib.BackoffManager) ResourceRepository {
 	ownerRefOpBuilder := NewOwnerReferenceOpBuilder(store)
-	deletionOpBuilder := NewDeletionOpBuilder(store)
+	deletionOpBuilder := NewDeletionOpBuilder(store, logger)
 	watchManager := NewWatchManager(store, logger, watchConfig, backoffManager)
 	return &resourceRepository{
 		store:             store,
@@ -86,7 +86,7 @@ func (r *resourceRepository) List(ctx context.Context, key types.ResourceKey, li
 }
 
 // TODO: allow deleting only if lock is still valid
-func (r *resourceRepository) Delete(ctx context.Context, key types.ObjectKey, markDeletionObjectKeys []types.ObjectKey, removeReferencesObjectKeys []types.ObjectKey) error {
+func (r *resourceRepository) Delete(ctx context.Context, key types.ObjectKey) error {
 	resource, err := r.Get(ctx, key)
 	if err != nil {
 		return err
@@ -99,22 +99,25 @@ func (r *resourceRepository) Delete(ctx context.Context, key types.ObjectKey, ma
 		return errors.Wrap(err, "failed to create owner reference deletion operations")
 	}
 
-	deletionOps, err := r.deletionOpBuilder.BuildDeletionOperations(
+	reversedOwnerRefs, err := r.ownerRefOpBuilder.GetReversedOwnerReferences(ctx, key)
+	if err != nil {
+		return errors.Wrap(err, "failed to get reversed owner references")
+	}
+
+	childrenCleanupOps, err := r.deletionOpBuilder.BuildChildrenCleanupOperations(
 		ctx,
 		key,
-		ownerRefs,
 		resource,
-		markDeletionObjectKeys,
-		removeReferencesObjectKeys,
+		reversedOwnerRefs,
 	)
 	if err != nil {
-		return errors.Wrap(err, "failed to create deletion operations")
+		return errors.Wrap(err, "failed to create children cleanup operations")
 	}
 
 	var ops []clientv3.Op
 	ops = append(ops, clientv3.OpDelete(key.String()))
 	ops = append(ops, refOps...)
-	ops = append(ops, deletionOps...)
+	ops = append(ops, childrenCleanupOps...)
 
 	return r.store.ExecuteTransaction(ctx, ops)
 }
@@ -160,7 +163,7 @@ func (r *resourceRepository) MarkDeleted(ctx context.Context, key types.ObjectKe
 		return internalerrors.NewMarshalingError("failed to marshal resource with deletion timestamp")
 	}
 
-	deletionOp, err := r.deletionOpBuilder.BuildMarkDeletionOperation(ctx, key)
+	deletionOp, err := r.deletionOpBuilder.BuildMarkDeletionOperation(key)
 	if err != nil {
 		return errors.Wrap(err, "failed to build mark deletion operations")
 	}

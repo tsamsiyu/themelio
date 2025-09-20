@@ -4,7 +4,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
@@ -185,7 +184,7 @@ func (w *Worker) processDeletionEvent(ctx context.Context, event DeletionEvent, 
 		return
 	}
 
-	err = w.deleteResourceWithChildren(ctx, event.ObjectKey, resource)
+	err = w.repo.Delete(ctx, event.ObjectKey)
 	if err != nil {
 		w.logger.Error("Failed to delete resource",
 			zap.String("objectKey", event.ObjectKey.String()),
@@ -217,72 +216,4 @@ func (w *Worker) shouldSkipDeletion(ctx context.Context, resource *unstructured.
 	}
 
 	return false, nil
-}
-
-// deleteResourceWithChildren deletes a resource and handles its children
-// it cleans up owner references of children who reference the deleted resource;
-// it also marks children for deletion if they do not have any other owner references that are blocking deletion
-func (w *Worker) deleteResourceWithChildren(ctx context.Context, objectKey types.ObjectKey, object *unstructured.Unstructured) error {
-	childKeys, err := w.repo.GetReversedOwnerReferences(ctx, objectKey)
-	if err != nil {
-		return errors.Wrap(err, "failed to get reversed owner references")
-	}
-
-	var childrenToDelete []types.ObjectKey
-	var childrenToUpdate []struct {
-		key    types.ObjectKey
-		remove bool
-	}
-
-	for childKeyStr := range childKeys {
-		childKey, err := types.ParseObjectKey(childKeyStr)
-		if err != nil {
-			w.logger.Error("Failed to parse child object key",
-				zap.String("childKey", childKeyStr),
-				zap.Error(err))
-			continue
-		}
-
-		child, err := w.repo.Get(ctx, childKey)
-		if err != nil {
-			w.logger.Error("Failed to get child resource",
-				zap.String("childKey", childKey.String()),
-				zap.Error(err))
-			continue
-		}
-
-		if child == nil {
-			continue
-		}
-
-		childOwnerRefs := child.GetOwnerReferences()
-		hasBlockingParent := false
-
-		for _, childOwnerRef := range childOwnerRefs {
-			if childOwnerRef.UID == object.GetUID() { // skip reference to object itself
-				continue
-			}
-
-			if childOwnerRef.BlockOwnerDeletion != nil && *childOwnerRef.BlockOwnerDeletion {
-				hasBlockingParent = true
-				break
-			}
-		}
-
-		if hasBlockingParent {
-			childrenToUpdate = append(childrenToUpdate, struct {
-				key    types.ObjectKey
-				remove bool
-			}{childKey, true})
-		} else {
-			childrenToDelete = append(childrenToDelete, childKey)
-		}
-	}
-
-	var removeReferencesKeys []types.ObjectKey
-	for _, childUpdate := range childrenToUpdate {
-		removeReferencesKeys = append(removeReferencesKeys, childUpdate.key)
-	}
-
-	return w.repo.Delete(ctx, objectKey, childrenToDelete, removeReferencesKeys)
 }

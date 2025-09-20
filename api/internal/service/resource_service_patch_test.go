@@ -63,8 +63,8 @@ func (m *mockResourceRepository) List(ctx context.Context, key types.ResourceKey
 	return args.Get(0).([]*unstructured.Unstructured), args.Error(1)
 }
 
-func (m *mockResourceRepository) Delete(ctx context.Context, key types.ObjectKey, markDeletionObjectKeys []types.ObjectKey, removeReferencesObjectKeys []types.ObjectKey) error {
-	args := m.Called(ctx, key, markDeletionObjectKeys, removeReferencesObjectKeys)
+func (m *mockResourceRepository) Delete(ctx context.Context, key types.ObjectKey) error {
+	args := m.Called(ctx, key)
 	return args.Error(0)
 }
 
