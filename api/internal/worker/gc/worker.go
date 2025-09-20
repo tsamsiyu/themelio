@@ -6,7 +6,6 @@ import (
 
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"github.com/tsamsiyu/themelio/api/internal/repository"
@@ -33,6 +32,10 @@ func DefaultConfig() *Config {
 	}
 }
 
+// Worker is responsible for deleting resources and cleaning up owner references of children who reference the deleted resource
+// It picks up resources marked for deletion
+// It does not delete children resource, it marks them for deletion
+// This is the single source of truth for deleting resources
 type Worker struct {
 	logger    *zap.Logger
 	repo      repository.ResourceRepository
@@ -163,26 +166,22 @@ func (w *Worker) processDeletionEvent(ctx context.Context, event DeletionEvent, 
 		return
 	}
 
-	ownerRefs := resource.GetOwnerReferences()
-	if len(ownerRefs) > 0 {
-		shouldSkip, err := w.shouldSkipDeletion(ctx, ownerRefs, event.ObjectKey.Namespace)
-		if err != nil {
-			w.logger.Error("Failed to check parent owner references",
-				zap.String("objectKey", event.ObjectKey.String()),
-				zap.Error(err))
-			return
-		}
+	shouldSkip, err := w.shouldSkipDeletion(ctx, resource)
+	if err != nil {
+		w.logger.Error("Failed to check whether deletion should be skipped",
+			zap.String("objectKey", event.ObjectKey.String()),
+			zap.Error(err))
+		return
+	}
 
-		if shouldSkip {
-			w.logger.Debug("Skipping deletion due to blocking parent owner reference",
-				zap.String("objectKey", event.ObjectKey.String()))
-			return
-		}
+	if shouldSkip {
+		w.logger.Debug("Skipping deletion", zap.String("objectKey", event.ObjectKey.String()))
+		return
 	}
 
 	err = w.deleteResourceWithChildren(ctx, event.ObjectKey, resource)
 	if err != nil {
-		w.logger.Error("Failed to delete resource with children",
+		w.logger.Error("Failed to delete resource",
 			zap.String("objectKey", event.ObjectKey.String()),
 			zap.Error(err))
 		return
@@ -192,21 +191,22 @@ func (w *Worker) processDeletionEvent(ctx context.Context, event DeletionEvent, 
 }
 
 // shouldSkipDeletion checks if deletion should be skipped due to blocking owner references
-func (w *Worker) shouldSkipDeletion(ctx context.Context, ownerRefs []metav1.OwnerReference, namespace string) (bool, error) {
+func (w *Worker) shouldSkipDeletion(ctx context.Context, resource *unstructured.Unstructured) (bool, error) {
+	if resource.GetFinalizers() != nil && len(resource.GetFinalizers()) > 0 {
+		return true, nil // resource has finalizers, skipping deletion
+	}
+
+	ownerRefs := resource.GetOwnerReferences()
 	for _, ownerRef := range ownerRefs {
-		parentKey := types.OwnerRefToObjectKey(ownerRef, namespace)
-
-		parent, err := w.repo.Get(ctx, parentKey)
-		if err != nil {
-			return false, err
-		}
-
-		if parent == nil {
-			continue
-		}
-
 		if ownerRef.BlockOwnerDeletion != nil && *ownerRef.BlockOwnerDeletion {
-			return true, nil
+			parentKey := types.OwnerRefToObjectKey(ownerRef, resource.GetNamespace())
+			parent, err := w.repo.Get(ctx, parentKey)
+			if err != nil {
+				return false, err
+			}
+			if parent != nil {
+				return true, nil // parent resource is blocking deletion
+			}
 		}
 	}
 
@@ -214,6 +214,8 @@ func (w *Worker) shouldSkipDeletion(ctx context.Context, ownerRefs []metav1.Owne
 }
 
 // deleteResourceWithChildren deletes a resource and handles its children
+// it cleans up owner references of children who reference the deleted resource;
+// it also marks children for deletion if they do not have any other owner references that are blocking deletion
 func (w *Worker) deleteResourceWithChildren(ctx context.Context, objectKey types.ObjectKey, object *unstructured.Unstructured) error {
 	childKeys, err := w.repo.GetReversedOwnerReferences(ctx, objectKey)
 	if err != nil {
@@ -251,7 +253,7 @@ func (w *Worker) deleteResourceWithChildren(ctx context.Context, objectKey types
 		hasBlockingParent := false
 
 		for _, childOwnerRef := range childOwnerRefs {
-			if childOwnerRef.UID == object.GetUID() { // skip self
+			if childOwnerRef.UID == object.GetUID() { // skip reference to object itself
 				continue
 			}
 
