@@ -26,17 +26,23 @@ type ResourceStore interface {
 	Put(ctx context.Context, key types.ObjectKey, resource *unstructured.Unstructured) error
 	Get(ctx context.Context, key types.ObjectKey) (*unstructured.Unstructured, error)
 	Delete(ctx context.Context, key types.ObjectKey) error
-	List(ctx context.Context, key types.ResourceKey) ([]*unstructured.Unstructured, error)
+	List(ctx context.Context, key types.ResourceKey, limit int) ([]*unstructured.Unstructured, error)
 
 	// Raw operations for complex transactions
 	GetRaw(ctx context.Context, key string) ([]byte, error)
-	ListRaw(ctx context.Context, prefix string) ([]KeyValue, error)
+	ListRaw(ctx context.Context, prefix string, limit int) ([]KeyValue, error)
 
 	// Marshaling utilities
 	MarshalResource(resource *unstructured.Unstructured) (string, error)
 
 	// Transaction execution
 	ExecuteTransaction(ctx context.Context, ops []clientv3.Op) error
+	ExecuteConditionalTransaction(ctx context.Context, compare []clientv3.Cmp, successOps []clientv3.Op, failureOps []clientv3.Op) (*clientv3.TxnResponse, error)
+
+	// Lease management
+	GrantLease(ctx context.Context, ttl int64) (*clientv3.LeaseGrantResponse, error)
+	RevokeLease(ctx context.Context, leaseID clientv3.LeaseID) (*clientv3.LeaseRevokeResponse, error)
+	KeepAliveLease(ctx context.Context, leaseID clientv3.LeaseID) (<-chan *clientv3.LeaseKeepAliveResponse, error)
 
 	// Watch operations
 	Watch(ctx context.Context, key types.DbKey, eventChan chan<- types.WatchEvent) error
@@ -95,8 +101,14 @@ func (s *resourceStore) GetRaw(ctx context.Context, key string) ([]byte, error) 
 	return resp.Kvs[0].Value, nil
 }
 
-func (s *resourceStore) ListRaw(ctx context.Context, prefix string) ([]KeyValue, error) {
-	resp, err := s.client.Get(ctx, prefix, clientv3.WithPrefix())
+func (s *resourceStore) ListRaw(ctx context.Context, prefix string, limit int) ([]KeyValue, error) {
+	opts := []clientv3.OpOption{clientv3.WithPrefix()}
+
+	if limit > 0 {
+		opts = append(opts, clientv3.WithLimit(int64(limit)))
+	}
+
+	resp, err := s.client.Get(ctx, prefix, opts...)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to list resources from etcd")
 	}
@@ -112,9 +124,15 @@ func (s *resourceStore) ListRaw(ctx context.Context, prefix string) ([]KeyValue,
 	return kvs, nil
 }
 
-func (s *resourceStore) List(ctx context.Context, key types.ResourceKey) ([]*unstructured.Unstructured, error) {
+func (s *resourceStore) List(ctx context.Context, key types.ResourceKey, limit int) ([]*unstructured.Unstructured, error) {
 	prefix := key.String()
-	resp, err := s.client.Get(ctx, prefix, clientv3.WithPrefix())
+	opts := []clientv3.OpOption{clientv3.WithPrefix()}
+
+	if limit > 0 {
+		opts = append(opts, clientv3.WithLimit(int64(limit)))
+	}
+
+	resp, err := s.client.Get(ctx, prefix, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -143,6 +161,53 @@ func (s *resourceStore) ExecuteTransaction(ctx context.Context, ops []clientv3.O
 	}
 
 	return nil
+}
+
+func (s *resourceStore) ExecuteConditionalTransaction(ctx context.Context, compare []clientv3.Cmp, successOps []clientv3.Op, failureOps []clientv3.Op) (*clientv3.TxnResponse, error) {
+	txn := s.client.Txn(ctx)
+
+	if len(compare) > 0 {
+		txn = txn.If(compare...)
+	}
+
+	if len(successOps) > 0 {
+		txn = txn.Then(successOps...)
+	}
+
+	if len(failureOps) > 0 {
+		txn = txn.Else(failureOps...)
+	}
+
+	txnResp, err := txn.Commit()
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to execute conditional transaction")
+	}
+
+	return txnResp, nil
+}
+
+func (s *resourceStore) GrantLease(ctx context.Context, ttl int64) (*clientv3.LeaseGrantResponse, error) {
+	lease, err := s.client.Grant(ctx, ttl)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to grant lease")
+	}
+	return lease, nil
+}
+
+func (s *resourceStore) RevokeLease(ctx context.Context, leaseID clientv3.LeaseID) (*clientv3.LeaseRevokeResponse, error) {
+	resp, err := s.client.Revoke(ctx, leaseID)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to revoke lease")
+	}
+	return resp, nil
+}
+
+func (s *resourceStore) KeepAliveLease(ctx context.Context, leaseID clientv3.LeaseID) (<-chan *clientv3.LeaseKeepAliveResponse, error) {
+	ch, err := s.client.KeepAlive(ctx, leaseID)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to keep alive lease")
+	}
+	return ch, nil
 }
 
 func (s *resourceStore) Watch(ctx context.Context, key types.DbKey, eventChan chan<- types.WatchEvent) error {

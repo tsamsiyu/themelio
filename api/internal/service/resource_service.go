@@ -66,7 +66,7 @@ func (s *resourceService) GetResource(ctx context.Context, objectKey types.Objec
 }
 
 func (s *resourceService) ListResources(ctx context.Context, resourceKey types.ResourceKey) ([]*unstructured.Unstructured, error) {
-	return s.repo.List(ctx, resourceKey)
+	return s.repo.List(ctx, resourceKey, 0)
 }
 
 func (s *resourceService) DeleteResource(ctx context.Context, objectKey types.ObjectKey) error {

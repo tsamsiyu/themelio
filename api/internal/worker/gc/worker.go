@@ -22,6 +22,9 @@ type DeletionEvent struct {
 type Config struct {
 	PollInterval time.Duration
 	Workers      int
+	LockKey      string
+	LockExp      time.Duration
+	BatchLimit   int
 }
 
 // DefaultConfig returns default configuration for the GC worker
@@ -29,6 +32,9 @@ func DefaultConfig() *Config {
 	return &Config{
 		PollInterval: 1 * time.Second,
 		Workers:      3,
+		LockKey:      "gc-worker",
+		LockExp:      5 * time.Minute,
+		BatchLimit:   10,
 	}
 }
 
@@ -96,19 +102,19 @@ func (w *Worker) producer(ctx context.Context) {
 
 // pollDeletions queries the repository for resources marked for deletion
 func (w *Worker) pollDeletions(ctx context.Context) {
-	deletions, err := w.repo.ListDeletions(ctx)
+	deletionBatch, err := w.repo.ListDeletions(ctx, w.config.LockKey, w.config.LockExp, w.config.BatchLimit)
 	if err != nil {
 		w.logger.Error("Failed to list deletions", zap.Error(err))
 		return
 	}
 
-	if len(deletions) == 0 {
+	if len(deletionBatch.ObjectKeys) == 0 {
 		return
 	}
 
-	w.logger.Debug("Found resources marked for deletion", zap.Int("count", len(deletions)))
+	w.logger.Debug("Found resources marked for deletion", zap.Int("count", len(deletionBatch.ObjectKeys)))
 
-	for _, objectKey := range deletions {
+	for _, objectKey := range deletionBatch.ObjectKeys {
 		event := DeletionEvent{
 			ObjectKey: objectKey,
 			Timestamp: time.Now(),

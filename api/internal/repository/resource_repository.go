@@ -18,11 +18,11 @@ import (
 type ResourceRepository interface {
 	Replace(ctx context.Context, key types.ObjectKey, resource *unstructured.Unstructured) error
 	Get(ctx context.Context, key types.ObjectKey) (*unstructured.Unstructured, error)
-	List(ctx context.Context, key types.ResourceKey) ([]*unstructured.Unstructured, error)
+	List(ctx context.Context, key types.ResourceKey, limit int) ([]*unstructured.Unstructured, error)
 	Delete(ctx context.Context, key types.ObjectKey, markDeletionObjectKeys []types.ObjectKey, removeReferencesObjectKeys []types.ObjectKey) error
 	Watch(ctx context.Context, key types.DbKey, eventChan chan<- types.WatchEvent) error
 	MarkDeleted(ctx context.Context, key types.ObjectKey) error
-	ListDeletions(ctx context.Context) ([]types.ObjectKey, error)
+	ListDeletions(ctx context.Context, lockKey string, lockExp time.Duration, batchLimit int) (*types.DeletionBatch, error)
 	GetReversedOwnerReferences(ctx context.Context, parentKey types.ObjectKey) (types.ReversedOwnerReferenceSet, error)
 }
 
@@ -81,10 +81,11 @@ func (r *resourceRepository) Get(ctx context.Context, key types.ObjectKey) (*uns
 	return r.store.Get(ctx, key)
 }
 
-func (r *resourceRepository) List(ctx context.Context, key types.ResourceKey) ([]*unstructured.Unstructured, error) {
-	return r.store.List(ctx, key)
+func (r *resourceRepository) List(ctx context.Context, key types.ResourceKey, limit int) ([]*unstructured.Unstructured, error) {
+	return r.store.List(ctx, key, limit)
 }
 
+// TODO: allow deleting only if lock is still valid
 func (r *resourceRepository) Delete(ctx context.Context, key types.ObjectKey, markDeletionObjectKeys []types.ObjectKey, removeReferencesObjectKeys []types.ObjectKey) error {
 	resource, err := r.Get(ctx, key)
 	if err != nil {
@@ -169,7 +170,7 @@ func (r *resourceRepository) MarkDeleted(ctx context.Context, key types.ObjectKe
 	return r.store.ExecuteTransaction(ctx, []clientv3.Op{*deletionOp, updateOp})
 }
 
-// ListDeletions returns all resources marked for deletion
-func (r *resourceRepository) ListDeletions(ctx context.Context) ([]types.ObjectKey, error) {
-	return r.deletionOpBuilder.ListDeletions(ctx)
+// ListDeletions returns a batch of resources marked for deletion using distributed locking
+func (r *resourceRepository) ListDeletions(ctx context.Context, lockKey string, lockExp time.Duration, batchLimit int) (*types.DeletionBatch, error) {
+	return r.deletionOpBuilder.AcquireDeletions(ctx, lockKey, lockExp, batchLimit)
 }

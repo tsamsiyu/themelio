@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/pkg/errors"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -97,23 +98,66 @@ func (b *DeletionOpBuilder) BuildDeletionOperations(
 	return ops, nil
 }
 
-func (b *DeletionOpBuilder) ListDeletions(ctx context.Context) ([]types.ObjectKey, error) {
+func (b *DeletionOpBuilder) ListDeletions(ctx context.Context, batchLimit int) ([]types.DeletionRecord, error) {
 	prefix := "/deletion/"
-
-	kvs, err := b.store.ListRaw(ctx, prefix)
+	kvs, err := b.store.ListRaw(ctx, prefix, batchLimit)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to list deletion records from etcd")
 	}
 
-	var objectKeys []types.ObjectKey
+	var deletionRecords []types.DeletionRecord
 	for _, kv := range kvs {
 		var deletionRecord types.DeletionRecord
 		if err := json.Unmarshal(kv.Value, &deletionRecord); err != nil {
 			continue
 		}
-
-		objectKeys = append(objectKeys, deletionRecord.ObjectKey)
+		deletionRecords = append(deletionRecords, deletionRecord)
 	}
 
-	return objectKeys, nil
+	return deletionRecords, nil
+}
+
+func (b *DeletionOpBuilder) AcquireDeletions(ctx context.Context, lockKey string, lockExp time.Duration, batchLimit int) (*types.DeletionBatch, error) {
+	leaseResp, err := b.store.GrantLease(ctx, int64(lockExp.Seconds()))
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to grant lease for deletion lock")
+	}
+
+	deletionRecords, err := b.ListDeletions(ctx, batchLimit)
+	if err != nil {
+		b.store.RevokeLease(ctx, leaseResp.ID)
+		return nil, err
+	}
+
+	if len(deletionRecords) == 0 {
+		b.store.RevokeLease(ctx, leaseResp.ID)
+		return &types.DeletionBatch{ObjectKeys: []types.ObjectKey{}, LeaseID: leaseResp.ID}, nil
+	}
+
+	var objectKeys []types.ObjectKey
+
+	for _, deletionRecord := range deletionRecords {
+		var txnResp *clientv3.TxnResponse
+		var err error
+
+		objectLockPath := fmt.Sprintf("/locks/deletion/%s", deletionRecord.ObjectKey.String())
+
+		noLockCompareOp := []clientv3.Cmp{clientv3.Compare(clientv3.Version(objectLockPath), "=", 0)}
+		leaseOp := []clientv3.Op{clientv3.OpPut(objectLockPath, lockKey, clientv3.WithLease(leaseResp.ID))}
+
+		txnResp, err = b.store.ExecuteConditionalTransaction(ctx, noLockCompareOp, leaseOp, nil)
+		if err == nil && txnResp.Succeeded {
+			objectKeys = append(objectKeys, deletionRecord.ObjectKey)
+			continue
+		}
+
+		lockedByItselfCompareOp := []clientv3.Cmp{clientv3.Compare(clientv3.Value(objectLockPath), "=", lockKey)}
+
+		txnResp, err = b.store.ExecuteConditionalTransaction(ctx, lockedByItselfCompareOp, leaseOp, nil)
+		if err == nil && txnResp.Succeeded {
+			objectKeys = append(objectKeys, deletionRecord.ObjectKey)
+		}
+	}
+
+	return &types.DeletionBatch{ObjectKeys: objectKeys, LeaseID: leaseResp.ID}, nil
 }

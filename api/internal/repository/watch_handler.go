@@ -190,7 +190,7 @@ func (h *WatchHandler) reconcile(ctx context.Context) error {
 		}
 	}
 
-	resources, err := h.store.List(ctx, resourceKey)
+	resources, err := h.store.List(ctx, resourceKey, 0)
 	if err != nil {
 		return err
 	}

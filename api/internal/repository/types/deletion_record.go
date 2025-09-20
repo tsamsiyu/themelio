@@ -2,6 +2,8 @@ package types
 
 import (
 	"time"
+
+	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
 // DeletionRecord represents a deletion record stored in etcd
@@ -16,4 +18,10 @@ func NewDeletionRecord(objectKey ObjectKey) *DeletionRecord {
 		ObjectKey: objectKey,
 		Timestamp: time.Now(),
 	}
+}
+
+// DeletionBatch represents a batch of locked deletion records
+type DeletionBatch struct {
+	ObjectKeys []ObjectKey
+	LeaseID    clientv3.LeaseID
 }

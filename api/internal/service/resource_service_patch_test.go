@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"testing"
+	"time"
 
 	jsonpatch "github.com/evanphx/json-patch/v5"
 	"github.com/stretchr/testify/assert"
@@ -54,8 +55,8 @@ func (m *mockResourceRepository) Get(ctx context.Context, key types.ObjectKey) (
 	return args.Get(0).(*unstructured.Unstructured), args.Error(1)
 }
 
-func (m *mockResourceRepository) List(ctx context.Context, key types.ResourceKey) ([]*unstructured.Unstructured, error) {
-	args := m.Called(ctx, key)
+func (m *mockResourceRepository) List(ctx context.Context, key types.ResourceKey, limit int) ([]*unstructured.Unstructured, error) {
+	args := m.Called(ctx, key, limit)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -77,12 +78,12 @@ func (m *mockResourceRepository) MarkDeleted(ctx context.Context, key types.Obje
 	return args.Error(0)
 }
 
-func (m *mockResourceRepository) ListDeletions(ctx context.Context) ([]types.ObjectKey, error) {
-	args := m.Called(ctx)
+func (m *mockResourceRepository) ListDeletions(ctx context.Context, lockKey string, lockExp time.Duration, batchLimit int) (*types.DeletionBatch, error) {
+	args := m.Called(ctx, lockKey, lockExp, batchLimit)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).([]types.ObjectKey), args.Error(1)
+	return args.Get(0).(*types.DeletionBatch), args.Error(1)
 }
 
 func (m *mockResourceRepository) GetReversedOwnerReferences(ctx context.Context, parentKey types.ObjectKey) (types.ReversedOwnerReferenceSet, error) {
