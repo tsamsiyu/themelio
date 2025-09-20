@@ -13,6 +13,7 @@ api/
 ├── cmd/
 │   └── main.go                     # Application entry point
 ├── internal/
+│   ├── lib/                        # domain-agnostic code
 │   ├── api/                        # API layer
 │   │   ├── handlers/
 │   │   ├── middleware/

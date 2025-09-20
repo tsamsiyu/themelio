@@ -3,6 +3,7 @@ package app
 import (
 	"crypto/tls"
 	"fmt"
+	"time"
 
 	"github.com/go-playground/validator/v10"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -13,6 +14,7 @@ import (
 	"github.com/tsamsiyu/themelio/api/internal/api/handlers"
 	"github.com/tsamsiyu/themelio/api/internal/api/server"
 	"github.com/tsamsiyu/themelio/api/internal/config"
+	"github.com/tsamsiyu/themelio/api/internal/lib"
 	"github.com/tsamsiyu/themelio/api/internal/repository"
 	"github.com/tsamsiyu/themelio/api/internal/service"
 	sharedservice "github.com/tsamsiyu/themelio/api/internal/service/shared"
@@ -26,7 +28,8 @@ var CommonModule = fx.Options(
 		NewLogger,
 		NewETCDClient,
 		validator.New,
-		repository.NewResourceRepository,
+		repository.NewResourceStore,
+		NewResourceRepository,
 		repository.NewSchemaRepository,
 		service.NewResourceService,
 		sharedservice.NewSchemaService,
@@ -97,6 +100,20 @@ func NewETCDClient(cfg *config.Config) (*clientv3.Client, error) {
 	}
 
 	return client, nil
+}
+
+func NewResourceRepository(logger *zap.Logger, store repository.ResourceStore) repository.ResourceRepository {
+	watchConfig := repository.WatchConfig{
+		MaxRetries: 5,
+	}
+	backoffConfig := lib.BackoffConfig{
+		InitialBackoff:    800 * time.Millisecond,
+		MaxBackoff:        5 * time.Second,
+		BackoffMultiplier: 2.0,
+		ResetAfter:        1 * time.Minute,
+	}
+	backoffManager := lib.NewBackoffManager(backoffConfig)
+	return repository.NewResourceRepository(logger, store, watchConfig, backoffManager)
 }
 
 func createTLSConfig(tlsCfg config.TLSConfig) (*tls.Config, error) {

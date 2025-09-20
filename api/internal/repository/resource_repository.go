@@ -11,6 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	internalerrors "github.com/tsamsiyu/themelio/api/internal/errors"
+	"github.com/tsamsiyu/themelio/api/internal/lib"
 	"github.com/tsamsiyu/themelio/api/internal/repository/types"
 )
 
@@ -33,11 +34,10 @@ type resourceRepository struct {
 	logger            *zap.Logger
 }
 
-func NewResourceRepository(logger *zap.Logger, client *clientv3.Client) ResourceRepository {
-	store := NewResourceStore(logger, client)
+func NewResourceRepository(logger *zap.Logger, store ResourceStore, watchConfig WatchConfig, backoffManager *lib.BackoffManager) ResourceRepository {
 	ownerRefOpBuilder := NewOwnerReferenceOpBuilder(store)
 	deletionOpBuilder := NewDeletionOpBuilder(store)
-	watchManager := NewWatchManager(store, logger)
+	watchManager := NewWatchManager(store, logger, watchConfig, backoffManager)
 	return &resourceRepository{
 		store:             store,
 		ownerRefOpBuilder: ownerRefOpBuilder,

@@ -3,24 +3,28 @@ package repository
 import (
 	"context"
 	"sync"
-	"time"
 
 	"go.uber.org/zap"
 
+	"github.com/tsamsiyu/themelio/api/internal/lib"
 	"github.com/tsamsiyu/themelio/api/internal/repository/types"
 )
 
 type WatchManager struct {
 	store      ResourceStore
 	logger     *zap.Logger
+	config     WatchConfig
+	backoff    *lib.BackoffManager
 	handlers   map[string]*WatchHandler
 	handlersMu sync.RWMutex
 }
 
-func NewWatchManager(store ResourceStore, logger *zap.Logger) *WatchManager {
+func NewWatchManager(store ResourceStore, logger *zap.Logger, config WatchConfig, backoff *lib.BackoffManager) *WatchManager {
 	return &WatchManager{
 		store:    store,
 		logger:   logger,
+		config:   config,
+		backoff:  backoff,
 		handlers: make(map[string]*WatchHandler),
 	}
 }
@@ -34,10 +38,7 @@ func (m *WatchManager) Watch(ctx context.Context, key types.DbKey) <-chan types.
 
 	handler, exists := m.handlers[keyStr]
 	if !exists {
-		watchConfig := DefaultWatchConfig()
-		backoffConfig := DefaultBackoffConfig()
-		backoff := NewBackoffManager(backoffConfig)
-		handler = NewWatchHandler(key, m.store, m.logger, watchConfig, backoff)
+		handler = NewWatchHandler(key, m.store, m.logger, m.config, m.backoff)
 		m.handlers[keyStr] = handler
 		go m.startHandler(ctx, handler)
 	}
@@ -75,20 +76,5 @@ func (m *WatchManager) cleanupHandler(ctx context.Context, key string, handler *
 		if h, exists := m.handlers[key]; exists && h == handler {
 			delete(m.handlers, key)
 		}
-	}
-}
-
-func DefaultBackoffConfig() BackoffConfig {
-	return BackoffConfig{
-		InitialBackoff:    100 * time.Millisecond,
-		MaxBackoff:        3 * time.Second,
-		BackoffMultiplier: 0.1,
-		ResetAfter:        1 * time.Minute,
-	}
-}
-
-func DefaultWatchConfig() WatchConfig {
-	return WatchConfig{
-		MaxRetries: 5,
 	}
 }

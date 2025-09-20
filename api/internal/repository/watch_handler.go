@@ -8,6 +8,7 @@ import (
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 
+	"github.com/tsamsiyu/themelio/api/internal/lib"
 	"github.com/tsamsiyu/themelio/api/internal/repository/types"
 )
 
@@ -20,7 +21,7 @@ type WatchHandler struct {
 	store        ResourceStore
 	logger       *zap.Logger
 	config       WatchConfig
-	backoff      *BackoffManager
+	backoff      *lib.BackoffManager
 	eventChan    chan<- types.WatchEvent
 	clients      []chan<- types.WatchEvent
 	clientsMutex sync.RWMutex
@@ -33,7 +34,7 @@ func NewWatchHandler(
 	store ResourceStore,
 	logger *zap.Logger,
 	config WatchConfig,
-	backoff *BackoffManager,
+	backoff *lib.BackoffManager,
 ) *WatchHandler {
 	return &WatchHandler{
 		key:     key,
