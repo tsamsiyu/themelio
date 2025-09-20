@@ -90,6 +90,24 @@ func (h *ResourceHandler) DeleteResource(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Resource deleted successfully"})
 }
 
+func (h *ResourceHandler) PatchResource(c *gin.Context) {
+	objectKey := h.getObjectKeyFromParams(c)
+
+	patchData, err := c.GetRawData()
+	if err != nil {
+		c.Error(errors.NewSerializationError("reading request body", err))
+		return
+	}
+
+	patchedResource, err := h.resourceService.PatchResource(c.Request.Context(), objectKey, patchData)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+
+	c.JSON(http.StatusOK, patchedResource)
+}
+
 func (h *ResourceHandler) getObjectKeyFromParams(c *gin.Context) types.ObjectKey {
 	group := c.Param("group")
 	version := c.Param("version")
