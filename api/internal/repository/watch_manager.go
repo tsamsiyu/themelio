@@ -25,25 +25,26 @@ func NewWatchManager(store ResourceStore, logger *zap.Logger) *WatchManager {
 	}
 }
 
-func (m *WatchManager) Watch(ctx context.Context, key string) <-chan types.WatchEvent {
+func (m *WatchManager) Watch(ctx context.Context, key types.DbKey) <-chan types.WatchEvent {
 	clientChan := make(chan types.WatchEvent, 100)
+	keyStr := key.ToKey()
 
 	m.handlersMu.Lock()
 	defer m.handlersMu.Unlock()
 
-	handler, exists := m.handlers[key]
+	handler, exists := m.handlers[keyStr]
 	if !exists {
 		watchConfig := DefaultWatchConfig()
 		backoffConfig := DefaultBackoffConfig()
 		backoff := NewBackoffManager(backoffConfig)
 		handler = NewWatchHandler(key, m.store, m.logger, watchConfig, backoff)
-		m.handlers[key] = handler
+		m.handlers[keyStr] = handler
 		go m.startHandler(ctx, handler)
 	}
 
 	handler.AddClient(clientChan)
 
-	go m.cleanupHandler(ctx, key, handler, clientChan)
+	go m.cleanupHandler(ctx, keyStr, handler, clientChan)
 
 	return clientChan
 }
@@ -56,7 +57,7 @@ func (m *WatchManager) startHandler(ctx context.Context, handler *WatchHandler) 
 		for event := range eventChan {
 			if event.Type == types.WatchEventTypeError {
 				m.logger.Error("Handler error",
-					zap.String("key", handler.key),
+					zap.String("key", handler.key.ToKey()),
 					zap.Error(event.Error))
 			}
 		}
@@ -75,15 +76,6 @@ func (m *WatchManager) cleanupHandler(ctx context.Context, key string, handler *
 			delete(m.handlers, key)
 		}
 	}
-}
-
-func (m *WatchManager) WatchClusterResource(ctx context.Context, gvk types.GroupVersionKind) <-chan types.WatchEvent {
-	return m.Watch(ctx, gvk.String())
-}
-
-func (m *WatchManager) WatchNamespacedResource(ctx context.Context, gvk types.GroupVersionKind, namespace string) <-chan types.WatchEvent {
-	key := types.NewResourceKey(gvk.Group, gvk.Version, gvk.Kind, namespace).String()
-	return m.Watch(ctx, key)
 }
 
 func DefaultBackoffConfig() BackoffConfig {

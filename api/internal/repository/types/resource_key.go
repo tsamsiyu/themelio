@@ -47,9 +47,14 @@ func (k ResourceKey) ToGroupVersionKind() GroupVersionKind {
 	}
 }
 
+// ToKey returns the string representation of the ResourceKey for database operations
+func (k ResourceKey) ToKey() string {
+	return fmt.Sprintf("/%s/%s/%s/%s", k.Group, k.Version, k.Kind, k.Namespace)
+}
+
 // String returns the string representation of the ResourceKey
 func (k ResourceKey) String() string {
-	return fmt.Sprintf("/%s/%s/%s/%s", k.Group, k.Version, k.Kind, k.Namespace)
+	return k.ToKey()
 }
 
 // ParseResourceKey parses a resource key string back to ResourceKey

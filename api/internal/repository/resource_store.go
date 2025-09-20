@@ -39,7 +39,7 @@ type ResourceStore interface {
 	ExecuteTransaction(ctx context.Context, ops []clientv3.Op) error
 
 	// Watch operations
-	Watch(ctx context.Context, key types.ResourceKey, eventChan chan<- types.WatchEvent) error
+	Watch(ctx context.Context, key types.DbKey, eventChan chan<- types.WatchEvent) error
 }
 
 type resourceStore struct {
@@ -145,8 +145,8 @@ func (s *resourceStore) ExecuteTransaction(ctx context.Context, ops []clientv3.O
 	return nil
 }
 
-func (s *resourceStore) Watch(ctx context.Context, key types.ResourceKey, eventChan chan<- types.WatchEvent) error {
-	go s.watchResources(ctx, key.String(), eventChan)
+func (s *resourceStore) Watch(ctx context.Context, key types.DbKey, eventChan chan<- types.WatchEvent) error {
+	go s.watchResources(ctx, key.ToKey(), eventChan)
 	return nil
 }
 

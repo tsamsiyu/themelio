@@ -16,7 +16,7 @@ type WatchConfig struct {
 }
 
 type WatchHandler struct {
-	key          string
+	key          types.DbKey
 	store        ResourceStore
 	logger       *zap.Logger
 	config       WatchConfig
@@ -29,7 +29,7 @@ type WatchHandler struct {
 }
 
 func NewWatchHandler(
-	key string,
+	key types.DbKey,
 	store ResourceStore,
 	logger *zap.Logger,
 	config WatchConfig,
@@ -109,15 +109,9 @@ func (h *WatchHandler) watchLoop(ctx context.Context) {
 
 		watchChan := make(chan types.WatchEvent, 100)
 
-		resourceKey, err := types.ParseResourceKey(h.key)
-		if err != nil {
-			h.logger.Error("Failed to parse resource key", zap.String("key", h.key), zap.Error(err))
-			return
-		}
 		// TODO: restart watcher with last revision if last error was not etcd's CompactedErr error
 		// TODO: if last error was CompactedErr or if start of watcher with a specified revision causes CompactedErr we have to call reconciler process
-		// TODO: change Watch method to accept DbKey interface so that we could pass both GVK and ResourceKey
-		go h.store.Watch(watchCtx, resourceKey, watchChan)
+		go h.store.Watch(watchCtx, h.key, watchChan)
 
 		watchErr := h.processWatchEvents(watchCtx, watchChan)
 
@@ -129,7 +123,7 @@ func (h *WatchHandler) watchLoop(ctx context.Context) {
 
 		if h.retryCount >= h.config.MaxRetries {
 			h.logger.Error("Max retries exceeded, stopping watcher",
-				zap.String("key", h.key),
+				zap.String("key", h.key.ToKey()),
 				zap.Int("retryCount", h.retryCount))
 			return // todo: return specific error to notify caller
 		}
@@ -138,7 +132,7 @@ func (h *WatchHandler) watchLoop(ctx context.Context) {
 		backoffDuration := h.backoff.NextBackoff()
 
 		h.logger.Warn("Watch error, retrying",
-			zap.String("key", h.key),
+			zap.String("key", h.key.ToKey()),
 			zap.Error(watchErr),
 			zap.Int("retryCount", h.retryCount),
 			zap.Duration("backoff", backoffDuration))
@@ -175,9 +169,24 @@ func (h *WatchHandler) processWatchEvents(ctx context.Context, watchChan <-chan 
 }
 
 func (h *WatchHandler) reconcile(ctx context.Context) error {
-	resourceKey, err := types.ParseResourceKey(h.key)
-	if err != nil {
-		return err
+	var resourceKey types.ResourceKey
+	var err error
+
+	switch key := h.key.(type) {
+	case types.ResourceKey:
+		resourceKey = key
+	case types.ObjectKey:
+		resourceKey = key.ToResourceKey()
+	case types.GroupVersionKind:
+		// For GVK, we need to list all namespaces, but this is complex
+		// For now, we'll skip reconciliation for GVK-only keys
+		return nil
+	default:
+		// Try to parse as ResourceKey string
+		resourceKey, err = types.ParseResourceKey(h.key.ToKey())
+		if err != nil {
+			return err
+		}
 	}
 
 	resources, err := h.store.List(ctx, resourceKey)

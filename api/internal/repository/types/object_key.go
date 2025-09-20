@@ -99,9 +99,14 @@ func (k ObjectKey) HasPrefix(prefix string) bool {
 	return strings.HasPrefix(keyStr, prefix)
 }
 
+// ToKey returns the string representation of the ObjectKey for database operations
+func (k ObjectKey) ToKey() string {
+	return fmt.Sprintf("/%s/%s/%s/%s/%s", k.Group, k.Version, k.Kind, k.Namespace, k.Name)
+}
+
 // String returns the string representation of the ObjectKey
 func (k ObjectKey) String() string {
-	return fmt.Sprintf("/%s/%s/%s/%s/%s", k.Group, k.Version, k.Kind, k.Namespace, k.Name)
+	return k.ToKey()
 }
 
 // MarshalLogObject implements zapcore.ObjectMarshaler for structured logging

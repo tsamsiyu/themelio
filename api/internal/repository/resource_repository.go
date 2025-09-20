@@ -19,9 +19,7 @@ type ResourceRepository interface {
 	Get(ctx context.Context, key types.ObjectKey) (*unstructured.Unstructured, error)
 	List(ctx context.Context, key types.ResourceKey) ([]*unstructured.Unstructured, error)
 	Delete(ctx context.Context, key types.ObjectKey, markDeletionObjectKeys []types.ObjectKey, removeReferencesObjectKeys []types.ObjectKey) error
-	Watch(ctx context.Context, key types.ResourceKey, eventChan chan<- types.WatchEvent) error
-	WatchClusterResource(ctx context.Context, gvk types.GroupVersionKind, eventChan chan<- types.WatchEvent) error
-	WatchNamespacedResource(ctx context.Context, gvk types.GroupVersionKind, namespace string, eventChan chan<- types.WatchEvent) error
+	Watch(ctx context.Context, key types.DbKey, eventChan chan<- types.WatchEvent) error
 	MarkDeleted(ctx context.Context, key types.ObjectKey) error
 	ListDeletions(ctx context.Context) ([]types.ObjectKey, error)
 	GetReversedOwnerReferences(ctx context.Context, parentKey types.ObjectKey) (types.ReversedOwnerReferenceSet, error)
@@ -120,8 +118,19 @@ func (r *resourceRepository) Delete(ctx context.Context, key types.ObjectKey, ma
 	return r.store.ExecuteTransaction(ctx, ops)
 }
 
-func (r *resourceRepository) Watch(ctx context.Context, key types.ResourceKey, eventChan chan<- types.WatchEvent) error {
-	return r.store.Watch(ctx, key, eventChan)
+func (r *resourceRepository) Watch(ctx context.Context, key types.DbKey, eventChan chan<- types.WatchEvent) error {
+	watchChan := r.watchManager.Watch(ctx, key)
+	go func() {
+		defer close(eventChan)
+		for event := range watchChan {
+			select {
+			case eventChan <- event:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return nil
 }
 
 func (r *resourceRepository) GetReversedOwnerReferences(
@@ -163,34 +172,4 @@ func (r *resourceRepository) MarkDeleted(ctx context.Context, key types.ObjectKe
 // ListDeletions returns all resources marked for deletion
 func (r *resourceRepository) ListDeletions(ctx context.Context) ([]types.ObjectKey, error) {
 	return r.deletionOpBuilder.ListDeletions(ctx)
-}
-
-func (r *resourceRepository) WatchClusterResource(ctx context.Context, gvk types.GroupVersionKind, eventChan chan<- types.WatchEvent) error {
-	watchChan := r.watchManager.WatchClusterResource(ctx, gvk)
-	go func() {
-		defer close(eventChan)
-		for event := range watchChan {
-			select {
-			case eventChan <- event:
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-	return nil
-}
-
-func (r *resourceRepository) WatchNamespacedResource(ctx context.Context, gvk types.GroupVersionKind, namespace string, eventChan chan<- types.WatchEvent) error {
-	watchChan := r.watchManager.WatchNamespacedResource(ctx, gvk, namespace)
-	go func() {
-		defer close(eventChan)
-		for event := range watchChan {
-			select {
-			case eventChan <- event:
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-	return nil
 }

@@ -67,18 +67,8 @@ func (m *mockResourceRepository) Delete(ctx context.Context, key types.ObjectKey
 	return args.Error(0)
 }
 
-func (m *mockResourceRepository) Watch(ctx context.Context, key types.ResourceKey, eventChan chan<- types.WatchEvent) error {
+func (m *mockResourceRepository) Watch(ctx context.Context, key types.DbKey, eventChan chan<- types.WatchEvent) error {
 	args := m.Called(ctx, key, eventChan)
-	return args.Error(0)
-}
-
-func (m *mockResourceRepository) WatchClusterResource(ctx context.Context, gvk types.GroupVersionKind, eventChan chan<- types.WatchEvent) error {
-	args := m.Called(ctx, gvk, eventChan)
-	return args.Error(0)
-}
-
-func (m *mockResourceRepository) WatchNamespacedResource(ctx context.Context, gvk types.GroupVersionKind, namespace string, eventChan chan<- types.WatchEvent) error {
-	args := m.Called(ctx, gvk, namespace, eventChan)
 	return args.Error(0)
 }
 
