@@ -23,7 +23,6 @@ type ResourceRepository interface {
 	Watch(ctx context.Context, key types.DbKey, eventChan chan<- types.WatchEvent) error
 	MarkDeleted(ctx context.Context, key types.ObjectKey) error
 	ListDeletions(ctx context.Context, lockKey string, lockExp time.Duration, batchLimit int) (*types.DeletionBatch, error)
-	GetReversedOwnerReferences(ctx context.Context, parentKey types.ObjectKey) (types.ReversedOwnerReferenceSet, error)
 }
 
 type resourceRepository struct {
@@ -35,7 +34,7 @@ type resourceRepository struct {
 }
 
 func NewResourceRepository(logger *zap.Logger, store ResourceStore, watchConfig WatchConfig, backoffManager *lib.BackoffManager) ResourceRepository {
-	ownerRefOpBuilder := NewOwnerReferenceOpBuilder(store)
+	ownerRefOpBuilder := NewOwnerReferenceOpBuilder(store, logger)
 	deletionOpBuilder := NewDeletionOpBuilder(store, logger)
 	watchManager := NewWatchManager(store, logger, watchConfig, backoffManager)
 	return &resourceRepository{
@@ -99,16 +98,14 @@ func (r *resourceRepository) Delete(ctx context.Context, key types.ObjectKey) er
 		return errors.Wrap(err, "failed to create owner reference deletion operations")
 	}
 
-	reversedOwnerRefs, err := r.ownerRefOpBuilder.GetReversedOwnerReferences(ctx, key)
+	childResources, err := r.ownerRefOpBuilder.QueryChildResources(ctx, key)
 	if err != nil {
-		return errors.Wrap(err, "failed to get reversed owner references")
+		return errors.Wrap(err, "failed to query child resources")
 	}
 
 	childrenCleanupOps, err := r.deletionOpBuilder.BuildChildrenCleanupOperations(
-		ctx,
-		key,
 		resource,
-		reversedOwnerRefs,
+		childResources,
 	)
 	if err != nil {
 		return errors.Wrap(err, "failed to create children cleanup operations")
@@ -135,13 +132,6 @@ func (r *resourceRepository) Watch(ctx context.Context, key types.DbKey, eventCh
 		}
 	}()
 	return nil
-}
-
-func (r *resourceRepository) GetReversedOwnerReferences(
-	ctx context.Context,
-	parentKey types.ObjectKey,
-) (types.ReversedOwnerReferenceSet, error) {
-	return r.ownerRefOpBuilder.GetReversedOwnerReferences(ctx, parentKey)
 }
 
 // MarkDeleted marks a resource for deletion by setting deletionTimestamp and adding to deletion collection

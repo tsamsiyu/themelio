@@ -6,7 +6,9 @@ import (
 
 	"github.com/pkg/errors"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"github.com/tsamsiyu/themelio/api/internal/repository/types"
 )
@@ -15,13 +17,15 @@ import (
 // we don't need reversed references for owner references that are not blocking deletion
 
 type OwnerReferenceOpBuilder struct {
-	store ResourceStore
+	store  ResourceStore
+	logger *zap.Logger
 }
 
 // NewOwnerReferenceOpBuilder creates a new OwnerReferenceOpBuilder
-func NewOwnerReferenceOpBuilder(store ResourceStore) *OwnerReferenceOpBuilder {
+func NewOwnerReferenceOpBuilder(store ResourceStore, logger *zap.Logger) *OwnerReferenceOpBuilder {
 	return &OwnerReferenceOpBuilder{
-		store: store,
+		store:  store,
+		logger: logger,
 	}
 }
 
@@ -142,4 +146,48 @@ func (b *OwnerReferenceOpBuilder) BuildDeletionOperations(
 	}
 
 	return ops, nil
+}
+
+// QueryChildResources queries all child resources for a given parent key
+func (b *OwnerReferenceOpBuilder) QueryChildResources(
+	ctx context.Context,
+	parentKey types.ObjectKey,
+) (map[string]*unstructured.Unstructured, error) {
+	reversedOwnerRefs, err := b.GetReversedOwnerReferences(ctx, parentKey)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get reversed owner references")
+	}
+
+	childResources := make(map[string]*unstructured.Unstructured)
+
+	for childKeyStr := range reversedOwnerRefs {
+		childKey, err := types.ParseObjectKey(childKeyStr)
+		if err != nil {
+			b.logger.Error("Failed to parse child object key",
+				zap.String("childKey", childKeyStr),
+				zap.String("parentKey", parentKey.String()),
+				zap.Error(err))
+			continue
+		}
+
+		child, err := b.store.Get(ctx, childKey)
+		if err != nil {
+			b.logger.Error("Failed to get child resource",
+				zap.String("childKey", childKeyStr),
+				zap.String("parentKey", parentKey.String()),
+				zap.Error(err))
+			continue
+		}
+
+		if child == nil {
+			b.logger.Warn("child resource not found by reversed reference",
+				zap.String("childKey", childKeyStr),
+				zap.String("parentKey", parentKey.String()))
+			continue
+		}
+
+		childResources[childKeyStr] = child
+	}
+
+	return childResources, nil
 }

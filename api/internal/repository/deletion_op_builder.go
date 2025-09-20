@@ -46,17 +46,10 @@ func (b *DeletionOpBuilder) BuildMarkDeletionOperation(
 
 // BuildChildrenCleanupOperations builds all operations needed to clean up children of a resource
 func (b *DeletionOpBuilder) BuildChildrenCleanupOperations(
-	ctx context.Context,
-	key types.ObjectKey,
 	resource *unstructured.Unstructured,
-	reversedOwnerRefs types.ReversedOwnerReferenceSet,
+	childResources map[string]*unstructured.Unstructured,
 ) ([]clientv3.Op, error) {
 	var allOps []clientv3.Op
-
-	childResources, err := b.queryChildResources(ctx, reversedOwnerRefs, key)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to query child resources")
-	}
 
 	refCleanupOps, err := b.buildChildrenReferenceCleanupOps(resource, childResources)
 	if err != nil {
@@ -71,46 +64,6 @@ func (b *DeletionOpBuilder) BuildChildrenCleanupOperations(
 	allOps = append(allOps, markDeletionOps...)
 
 	return allOps, nil
-}
-
-// queryChildResources queries all child resources once to avoid duplicate queries
-func (b *DeletionOpBuilder) queryChildResources(
-	ctx context.Context,
-	reversedOwnerRefs types.ReversedOwnerReferenceSet,
-	parentKey types.ObjectKey,
-) (map[string]*unstructured.Unstructured, error) {
-	childResources := make(map[string]*unstructured.Unstructured)
-
-	for childKeyStr := range reversedOwnerRefs {
-		childKey, err := types.ParseObjectKey(childKeyStr)
-		if err != nil {
-			b.logger.Error("Failed to parse child object key",
-				zap.String("childKey", childKeyStr),
-				zap.String("parentKey", parentKey.String()),
-				zap.Error(err))
-			continue
-		}
-
-		child, err := b.store.Get(ctx, childKey)
-		if err != nil {
-			b.logger.Error("Failed to get child resource",
-				zap.String("childKey", childKeyStr),
-				zap.String("parentKey", parentKey.String()),
-				zap.Error(err))
-			continue
-		}
-
-		if child == nil {
-			b.logger.Warn("child resource not found by reversed reference",
-				zap.String("childKey", childKeyStr),
-				zap.String("parentKey", parentKey.String()))
-			continue
-		}
-
-		childResources[childKeyStr] = child
-	}
-
-	return childResources, nil
 }
 
 // buildChildrenReferenceCleanupOps builds operations to remove owner references from children
