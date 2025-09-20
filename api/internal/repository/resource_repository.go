@@ -20,6 +20,8 @@ type ResourceRepository interface {
 	List(ctx context.Context, key types.ResourceKey) ([]*unstructured.Unstructured, error)
 	Delete(ctx context.Context, key types.ObjectKey, markDeletionObjectKeys []types.ObjectKey, removeReferencesObjectKeys []types.ObjectKey) error
 	Watch(ctx context.Context, key types.ResourceKey, eventChan chan<- types.WatchEvent) error
+	WatchClusterResource(ctx context.Context, gvk types.GroupVersionKind, eventChan chan<- types.WatchEvent) error
+	WatchNamespacedResource(ctx context.Context, gvk types.GroupVersionKind, namespace string, eventChan chan<- types.WatchEvent) error
 	MarkDeleted(ctx context.Context, key types.ObjectKey) error
 	ListDeletions(ctx context.Context) ([]types.ObjectKey, error)
 	GetReversedOwnerReferences(ctx context.Context, parentKey types.ObjectKey) (types.ReversedOwnerReferenceSet, error)
@@ -29,6 +31,7 @@ type resourceRepository struct {
 	store             ResourceStore
 	ownerRefOpBuilder *OwnerReferenceOpBuilder
 	deletionOpBuilder *DeletionOpBuilder
+	watchManager      *WatchManager
 	logger            *zap.Logger
 }
 
@@ -36,10 +39,12 @@ func NewResourceRepository(logger *zap.Logger, client *clientv3.Client) Resource
 	store := NewResourceStore(logger, client)
 	ownerRefOpBuilder := NewOwnerReferenceOpBuilder(store)
 	deletionOpBuilder := NewDeletionOpBuilder(store)
+	watchManager := NewWatchManager(store, logger)
 	return &resourceRepository{
 		store:             store,
 		ownerRefOpBuilder: ownerRefOpBuilder,
 		deletionOpBuilder: deletionOpBuilder,
+		watchManager:      watchManager,
 		logger:            logger,
 	}
 }
@@ -158,4 +163,34 @@ func (r *resourceRepository) MarkDeleted(ctx context.Context, key types.ObjectKe
 // ListDeletions returns all resources marked for deletion
 func (r *resourceRepository) ListDeletions(ctx context.Context) ([]types.ObjectKey, error) {
 	return r.deletionOpBuilder.ListDeletions(ctx)
+}
+
+func (r *resourceRepository) WatchClusterResource(ctx context.Context, gvk types.GroupVersionKind, eventChan chan<- types.WatchEvent) error {
+	watchChan := r.watchManager.WatchClusterResource(ctx, gvk)
+	go func() {
+		defer close(eventChan)
+		for event := range watchChan {
+			select {
+			case eventChan <- event:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return nil
+}
+
+func (r *resourceRepository) WatchNamespacedResource(ctx context.Context, gvk types.GroupVersionKind, namespace string, eventChan chan<- types.WatchEvent) error {
+	watchChan := r.watchManager.WatchNamespacedResource(ctx, gvk, namespace)
+	go func() {
+		defer close(eventChan)
+		for event := range watchChan {
+			select {
+			case eventChan <- event:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return nil
 }

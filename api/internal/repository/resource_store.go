@@ -167,10 +167,15 @@ func (s *resourceStore) unmarshalResource(data []byte) (*unstructured.Unstructur
 	return &obj, nil
 }
 
+// watchResources
+// if eventChan is full this method will block until the channel is ready to receive the event
 func (s *resourceStore) watchResources(ctx context.Context, prefix string, eventChan chan<- types.WatchEvent) {
 	defer close(eventChan)
 
-	watchChan := s.client.Watch(ctx, prefix, clientv3.WithPrefix())
+	watchCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	watchChan := s.client.Watch(watchCtx, prefix, clientv3.WithPrefix())
 
 	for {
 		select {
@@ -183,14 +188,26 @@ func (s *resourceStore) watchResources(ctx context.Context, prefix string, event
 			}
 
 			if watchResp.Err() != nil {
-				s.logger.Error("Watch error occurred",
-					zap.String("prefix", prefix),
-					zap.Error(watchResp.Err()))
-				continue
+				errorEvent := types.WatchEvent{
+					Type:      types.WatchEventTypeError,
+					Error:     watchResp.Err(),
+					Timestamp: time.Now(),
+					Revision:  watchResp.CompactRevision,
+				}
+				select {
+				case eventChan <- errorEvent:
+					s.logger.Debug("Watch error event sent",
+						zap.String("prefix", prefix),
+						zap.String("type", string(errorEvent.Type)),
+						zap.String("key", string(errorEvent.Error.Error())))
+				case <-ctx.Done():
+					break
+				}
+				return
 			}
 
 			for _, ev := range watchResp.Events {
-				event, err := s.convertEtcdEventToWatchEvent(ev)
+				event, err := s.convertEtcdEventToWatchEvent(ev, watchResp.Header.Revision)
 				if err != nil {
 					s.logger.Error("Failed to convert etcd event to watch event",
 						zap.String("prefix", prefix),
@@ -206,19 +223,16 @@ func (s *resourceStore) watchResources(ctx context.Context, prefix string, event
 						zap.String("key", string(ev.Kv.Key)))
 				case <-ctx.Done():
 					return
-				default:
-					s.logger.Warn("Watch event channel full, dropping event",
-						zap.String("prefix", prefix),
-						zap.String("type", string(event.Type)))
 				}
 			}
 		}
 	}
 }
 
-func (s *resourceStore) convertEtcdEventToWatchEvent(ev *clientv3.Event) (types.WatchEvent, error) {
+func (s *resourceStore) convertEtcdEventToWatchEvent(ev *clientv3.Event, revision int64) (types.WatchEvent, error) {
 	event := types.WatchEvent{
 		Timestamp: time.Now(),
+		Revision:  revision,
 	}
 
 	switch ev.Type {
