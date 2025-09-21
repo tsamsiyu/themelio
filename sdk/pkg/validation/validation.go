@@ -7,7 +7,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/tsamsiyu/themelio/sdk/pkg/types"
+	"github.com/tsamsiyu/themelio/sdk/pkg/types/crd"
 	"github.com/xeipuuv/gojsonschema"
 )
 
@@ -95,7 +95,7 @@ func ValidateTerm(term, termName string) error {
 	return nil
 }
 
-func ValidateCRD(crd *types.CustomResourceDefinition) error {
+func ValidateCRD(crd *crd.CustomResourceDefinition) error {
 	if err := ValidateApiGroup(crd.Spec.Group); err != nil {
 		return err
 	}

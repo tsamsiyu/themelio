@@ -13,7 +13,7 @@ import (
 
 	"github.com/tsamsiyu/themelio/api/internal/repository"
 	"github.com/tsamsiyu/themelio/api/internal/repository/types"
-	themeliotypes "github.com/tsamsiyu/themelio/sdk/pkg/types"
+	themeliotypes "github.com/tsamsiyu/themelio/sdk/pkg/types/crd"
 )
 
 // mockSchemaService is a mock implementation of SchemaService for testing

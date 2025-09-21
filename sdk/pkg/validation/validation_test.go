@@ -3,23 +3,23 @@ package validation
 import (
 	"testing"
 
-	"github.com/tsamsiyu/themelio/sdk/pkg/types"
+	"github.com/tsamsiyu/themelio/sdk/pkg/types/crd"
 )
 
 func TestValidateCRD(t *testing.T) {
 	tests := []struct {
 		name    string
-		crd     *types.CustomResourceDefinition
+		crd     *crd.CustomResourceDefinition
 		wantErr bool
 	}{
 		{
 			name: "valid CRD with single version",
-			crd: &types.CustomResourceDefinition{
-				Spec: types.CustomResourceDefinitionSpec{
+			crd: &crd.CustomResourceDefinition{
+				Spec: crd.CustomResourceDefinitionSpec{
 					Group: "example.com",
 					Kind:  "User",
-					Scope: types.ResourceScopeNamespaced,
-					Versions: []types.CustomResourceDefinitionVersion{
+					Scope: crd.ResourceScopeNamespaced,
+					Versions: []crd.CustomResourceDefinitionVersion{
 						{
 							Name: "v1",
 							Schema: map[string]interface{}{
@@ -39,12 +39,12 @@ func TestValidateCRD(t *testing.T) {
 		},
 		{
 			name: "valid CRD with multiple versions",
-			crd: &types.CustomResourceDefinition{
-				Spec: types.CustomResourceDefinitionSpec{
+			crd: &crd.CustomResourceDefinition{
+				Spec: crd.CustomResourceDefinitionSpec{
 					Group: "example.com",
 					Kind:  "User",
-					Scope: types.ResourceScopeNamespaced,
-					Versions: []types.CustomResourceDefinitionVersion{
+					Scope: crd.ResourceScopeNamespaced,
+					Versions: []crd.CustomResourceDefinitionVersion{
 						{
 							Name: "v1alpha1",
 							Schema: map[string]interface{}{
@@ -94,12 +94,12 @@ func TestValidateCRD(t *testing.T) {
 		},
 		{
 			name: "invalid group - single component",
-			crd: &types.CustomResourceDefinition{
-				Spec: types.CustomResourceDefinitionSpec{
+			crd: &crd.CustomResourceDefinition{
+				Spec: crd.CustomResourceDefinitionSpec{
 					Group: "example",
 					Kind:  "User",
-					Scope: types.ResourceScopeNamespaced,
-					Versions: []types.CustomResourceDefinitionVersion{
+					Scope: crd.ResourceScopeNamespaced,
+					Versions: []crd.CustomResourceDefinitionVersion{
 						{
 							Name: "v1",
 							Schema: map[string]interface{}{
@@ -113,12 +113,12 @@ func TestValidateCRD(t *testing.T) {
 		},
 		{
 			name: "invalid group - uppercase component",
-			crd: &types.CustomResourceDefinition{
-				Spec: types.CustomResourceDefinitionSpec{
+			crd: &crd.CustomResourceDefinition{
+				Spec: crd.CustomResourceDefinitionSpec{
 					Group: "Example.com",
 					Kind:  "User",
-					Scope: types.ResourceScopeNamespaced,
-					Versions: []types.CustomResourceDefinitionVersion{
+					Scope: crd.ResourceScopeNamespaced,
+					Versions: []crd.CustomResourceDefinitionVersion{
 						{
 							Name: "v1",
 							Schema: map[string]interface{}{
@@ -132,12 +132,12 @@ func TestValidateCRD(t *testing.T) {
 		},
 		{
 			name: "invalid kind - lowercase start",
-			crd: &types.CustomResourceDefinition{
-				Spec: types.CustomResourceDefinitionSpec{
+			crd: &crd.CustomResourceDefinition{
+				Spec: crd.CustomResourceDefinitionSpec{
 					Group: "example.com",
 					Kind:  "user",
-					Scope: types.ResourceScopeNamespaced,
-					Versions: []types.CustomResourceDefinitionVersion{
+					Scope: crd.ResourceScopeNamespaced,
+					Versions: []crd.CustomResourceDefinitionVersion{
 						{
 							Name: "v1",
 							Schema: map[string]interface{}{
@@ -151,12 +151,12 @@ func TestValidateCRD(t *testing.T) {
 		},
 		{
 			name: "invalid kind - special characters",
-			crd: &types.CustomResourceDefinition{
-				Spec: types.CustomResourceDefinitionSpec{
+			crd: &crd.CustomResourceDefinition{
+				Spec: crd.CustomResourceDefinitionSpec{
 					Group: "example.com",
 					Kind:  "User-Resource",
-					Scope: types.ResourceScopeNamespaced,
-					Versions: []types.CustomResourceDefinitionVersion{
+					Scope: crd.ResourceScopeNamespaced,
+					Versions: []crd.CustomResourceDefinitionVersion{
 						{
 							Name: "v1",
 							Schema: map[string]interface{}{
@@ -170,24 +170,24 @@ func TestValidateCRD(t *testing.T) {
 		},
 		{
 			name: "no versions",
-			crd: &types.CustomResourceDefinition{
-				Spec: types.CustomResourceDefinitionSpec{
+			crd: &crd.CustomResourceDefinition{
+				Spec: crd.CustomResourceDefinitionSpec{
 					Group:    "example.com",
 					Kind:     "User",
-					Scope:    types.ResourceScopeNamespaced,
-					Versions: []types.CustomResourceDefinitionVersion{},
+					Scope:    crd.ResourceScopeNamespaced,
+					Versions: []crd.CustomResourceDefinitionVersion{},
 				},
 			},
 			wantErr: true,
 		},
 		{
 			name: "invalid version format",
-			crd: &types.CustomResourceDefinition{
-				Spec: types.CustomResourceDefinitionSpec{
+			crd: &crd.CustomResourceDefinition{
+				Spec: crd.CustomResourceDefinitionSpec{
 					Group: "example.com",
 					Kind:  "User",
-					Scope: types.ResourceScopeNamespaced,
-					Versions: []types.CustomResourceDefinitionVersion{
+					Scope: crd.ResourceScopeNamespaced,
+					Versions: []crd.CustomResourceDefinitionVersion{
 						{
 							Name: "1.0",
 							Schema: map[string]interface{}{
@@ -201,12 +201,12 @@ func TestValidateCRD(t *testing.T) {
 		},
 		{
 			name: "version without schema",
-			crd: &types.CustomResourceDefinition{
-				Spec: types.CustomResourceDefinitionSpec{
+			crd: &crd.CustomResourceDefinition{
+				Spec: crd.CustomResourceDefinitionSpec{
 					Group: "example.com",
 					Kind:  "User",
-					Scope: types.ResourceScopeNamespaced,
-					Versions: []types.CustomResourceDefinitionVersion{
+					Scope: crd.ResourceScopeNamespaced,
+					Versions: []crd.CustomResourceDefinitionVersion{
 						{
 							Name:   "v1",
 							Schema: nil,
@@ -218,12 +218,12 @@ func TestValidateCRD(t *testing.T) {
 		},
 		{
 			name: "invalid schema - missing type",
-			crd: &types.CustomResourceDefinition{
-				Spec: types.CustomResourceDefinitionSpec{
+			crd: &crd.CustomResourceDefinition{
+				Spec: crd.CustomResourceDefinitionSpec{
 					Group: "example.com",
 					Kind:  "User",
-					Scope: types.ResourceScopeNamespaced,
-					Versions: []types.CustomResourceDefinitionVersion{
+					Scope: crd.ResourceScopeNamespaced,
+					Versions: []crd.CustomResourceDefinitionVersion{
 						{
 							Name: "v1",
 							Schema: map[string]interface{}{
@@ -241,12 +241,12 @@ func TestValidateCRD(t *testing.T) {
 		},
 		{
 			name: "valid CRD with complex schema",
-			crd: &types.CustomResourceDefinition{
-				Spec: types.CustomResourceDefinitionSpec{
+			crd: &crd.CustomResourceDefinition{
+				Spec: crd.CustomResourceDefinitionSpec{
 					Group: "example.com",
 					Kind:  "User",
-					Scope: types.ResourceScopeNamespaced,
-					Versions: []types.CustomResourceDefinitionVersion{
+					Scope: crd.ResourceScopeNamespaced,
+					Versions: []crd.CustomResourceDefinitionVersion{
 						{
 							Name: "v1",
 							Schema: map[string]interface{}{

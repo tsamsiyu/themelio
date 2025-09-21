@@ -1,8 +1,6 @@
-package types
+package crd
 
-import (
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-)
+import "github.com/tsamsiyu/themelio/sdk/pkg/types/meta"
 
 const (
 	CRD_GROUP   = "apiextensions.themelio.io"
@@ -10,9 +8,16 @@ const (
 	CRD_KIND    = "CustomResourceDefinition"
 )
 
+type ResourceScope string
+
+const (
+	ResourceScopeCluster    ResourceScope = "Cluster"
+	ResourceScopeNamespaced ResourceScope = "Namespaced"
+)
+
 type CustomResourceDefinition struct {
-	metav1.TypeMeta   `json:",inline"`
-	metav1.ObjectMeta `json:"metadata,omitempty"`
+	meta.TypeMeta   `json:",inline"`
+	meta.ObjectMeta `json:"metadata,omitempty"`
 
 	Spec   CustomResourceDefinitionSpec   `json:"spec,omitempty" validate:"required"`
 	Status CustomResourceDefinitionStatus `json:"status,omitempty" validate:"required"`

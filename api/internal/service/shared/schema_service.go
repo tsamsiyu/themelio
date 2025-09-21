@@ -9,7 +9,7 @@ import (
 
 	internalerrors "github.com/tsamsiyu/themelio/api/internal/errors"
 	"github.com/tsamsiyu/themelio/api/internal/repository"
-	themeliotypes "github.com/tsamsiyu/themelio/sdk/pkg/types"
+	themeliotypes "github.com/tsamsiyu/themelio/sdk/pkg/types/crd"
 	themeliovalidation "github.com/tsamsiyu/themelio/sdk/pkg/validation"
 )
 

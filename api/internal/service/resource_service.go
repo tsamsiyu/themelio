@@ -13,7 +13,7 @@ import (
 	"github.com/tsamsiyu/themelio/api/internal/repository"
 	"github.com/tsamsiyu/themelio/api/internal/repository/types"
 	sharedservice "github.com/tsamsiyu/themelio/api/internal/service/shared"
-	themeliotypes "github.com/tsamsiyu/themelio/sdk/pkg/types"
+	themeliotypes "github.com/tsamsiyu/themelio/sdk/pkg/types/crd"
 )
 
 var SENSITIVE_PATHS = []string{
