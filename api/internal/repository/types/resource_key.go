@@ -15,11 +15,16 @@ type ResourceKey struct {
 	Namespace string
 }
 
-// NewResourceKey creates a new ResourceKey
-func NewResourceKey(group, version, kind, namespace string) ResourceKey {
-	if namespace == "" {
-		namespace = "default"
+func NewClusterResourceKey(group, version, kind string) ResourceKey {
+	return ResourceKey{
+		Group:     group,
+		Version:   version,
+		Kind:      kind,
+		Namespace: "",
 	}
+}
+
+func NewNamespacedResourceKey(group, version, kind, namespace string) ResourceKey {
 	return ResourceKey{
 		Group:     group,
 		Version:   version,
@@ -47,8 +52,10 @@ func (k ResourceKey) ToGroupVersionKind() GroupVersionKind {
 	}
 }
 
-// ToKey returns the string representation of the ResourceKey for database operations
 func (k ResourceKey) ToKey() string {
+	if k.Namespace == "" {
+		return fmt.Sprintf("/%s/%s/%s", k.Group, k.Version, k.Kind)
+	}
 	return fmt.Sprintf("/%s/%s/%s/%s", k.Group, k.Version, k.Kind, k.Namespace)
 }
 
@@ -57,21 +64,26 @@ func (k ResourceKey) String() string {
 	return k.ToKey()
 }
 
-// ParseResourceKey parses a resource key string back to ResourceKey
 func ParseResourceKey(key string) (ResourceKey, error) {
 	key = strings.TrimPrefix(key, "/")
 	parts := strings.Split(key, "/")
 
-	if len(parts) != 4 {
-		return ResourceKey{}, fmt.Errorf("invalid resource key format: expected exactly 4 parts, got %d", len(parts))
+	if len(parts) == 3 {
+		return ResourceKey{
+			Group:     parts[0],
+			Version:   parts[1],
+			Kind:      parts[2],
+			Namespace: "",
+		}, nil
+	} else if len(parts) == 4 {
+		return ResourceKey{
+			Group:     parts[0],
+			Version:   parts[1],
+			Kind:      parts[2],
+			Namespace: parts[3],
+		}, nil
 	}
-
-	return ResourceKey{
-		Group:     parts[0],
-		Version:   parts[1],
-		Kind:      parts[2],
-		Namespace: parts[3],
-	}, nil
+	return ResourceKey{}, fmt.Errorf("invalid resource key format: expected 3 or 4 parts, got %d", len(parts))
 }
 
 // MarshalLogObject implements zapcore.ObjectMarshaler for structured logging

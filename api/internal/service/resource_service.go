@@ -13,6 +13,7 @@ import (
 	"github.com/tsamsiyu/themelio/api/internal/repository"
 	"github.com/tsamsiyu/themelio/api/internal/repository/types"
 	sharedservice "github.com/tsamsiyu/themelio/api/internal/service/shared"
+	themeliotypes "github.com/tsamsiyu/themelio/sdk/pkg/types"
 )
 
 var SENSITIVE_PATHS = []string{
@@ -22,12 +23,20 @@ var SENSITIVE_PATHS = []string{
 	"/metadata/resourceVersion",
 }
 
+type Params struct {
+	Group     string
+	Version   string
+	Kind      string
+	Namespace string
+	Name      string
+}
+
 type ResourceService interface {
-	ReplaceResource(ctx context.Context, objectKey types.ObjectKey, jsonData []byte) error
-	GetResource(ctx context.Context, objectKey types.ObjectKey) (*unstructured.Unstructured, error)
-	ListResources(ctx context.Context, resourceKey types.ResourceKey) ([]*unstructured.Unstructured, error)
-	DeleteResource(ctx context.Context, objectKey types.ObjectKey) error
-	PatchResource(ctx context.Context, objectKey types.ObjectKey, patchData []byte) (*unstructured.Unstructured, error)
+	ReplaceResource(ctx context.Context, params Params, jsonData []byte) error
+	GetResource(ctx context.Context, params Params) (*unstructured.Unstructured, error)
+	ListResources(ctx context.Context, params Params) ([]*unstructured.Unstructured, error)
+	DeleteResource(ctx context.Context, params Params) error
+	PatchResource(ctx context.Context, params Params, patchData []byte) (*unstructured.Unstructured, error)
 }
 
 type resourceService struct {
@@ -44,14 +53,53 @@ func NewResourceService(logger *zap.Logger, repo repository.ResourceRepository, 
 	}
 }
 
-func (s *resourceService) ReplaceResource(ctx context.Context, objectKey types.ObjectKey, jsonData []byte) error {
+func (s *resourceService) getObjectKeyFromParams(ctx context.Context, params Params) (types.ObjectKey, error) {
+	crd, err := s.schemaService.GetCRD(ctx, params.Group, params.Kind)
+	if err != nil {
+		return types.ObjectKey{}, err
+	}
+
+	if crd.Spec.Scope == themeliotypes.ResourceScopeCluster {
+		// we just ignore namespace here as it's not needed for cluster-scoped resources
+		return types.NewClusterObjectKey(params.Group, params.Version, params.Kind, params.Name), nil
+	}
+
+	if params.Namespace == "" {
+		return types.ObjectKey{}, internalerrors.NewInvalidInputError("namespace is required for namespaced resource")
+	}
+	return types.NewNamespacedObjectKey(params.Group, params.Version, params.Kind, params.Namespace, params.Name), nil
+}
+
+func (s *resourceService) getResourceKeyFromParams(ctx context.Context, params Params) (types.ResourceKey, error) {
+	crd, err := s.schemaService.GetCRD(ctx, params.Group, params.Kind)
+	if err != nil {
+		return types.ResourceKey{}, err
+	}
+
+	if crd.Spec.Scope == themeliotypes.ResourceScopeCluster {
+		// we just ignore namespace here as it's not needed for cluster-scoped resources
+		return types.NewClusterResourceKey(params.Group, params.Version, params.Kind), nil
+	}
+
+	if params.Namespace == "" {
+		return types.ResourceKey{}, internalerrors.NewInvalidInputError("namespace is required for namespaced resource")
+	}
+	return types.NewNamespacedResourceKey(params.Group, params.Version, params.Kind, params.Namespace), nil
+}
+
+func (s *resourceService) ReplaceResource(ctx context.Context, params Params, jsonData []byte) error {
+	objectKey, err := s.getObjectKeyFromParams(ctx, params)
+	if err != nil {
+		return err
+	}
+
 	resource, err := s.convertJSONToUnstructured(jsonData)
 	if err != nil {
 		return err
 	}
 
 	if err := s.schemaService.ValidateResource(ctx, resource); err != nil {
-		return internalerrors.NewInvalidResourceError("schema validation failed")
+		return err
 	}
 
 	if err := s.repo.Replace(ctx, objectKey, resource); err != nil {
@@ -61,20 +109,37 @@ func (s *resourceService) ReplaceResource(ctx context.Context, objectKey types.O
 	return nil
 }
 
-func (s *resourceService) GetResource(ctx context.Context, objectKey types.ObjectKey) (*unstructured.Unstructured, error) {
+func (s *resourceService) GetResource(ctx context.Context, params Params) (*unstructured.Unstructured, error) {
+	objectKey, err := s.getObjectKeyFromParams(ctx, params)
+	if err != nil {
+		return nil, err
+	}
 	return s.repo.Get(ctx, objectKey)
 }
 
-func (s *resourceService) ListResources(ctx context.Context, resourceKey types.ResourceKey) ([]*unstructured.Unstructured, error) {
+func (s *resourceService) ListResources(ctx context.Context, params Params) ([]*unstructured.Unstructured, error) {
+	resourceKey, err := s.getResourceKeyFromParams(ctx, params)
+	if err != nil {
+		return nil, err
+	}
 	return s.repo.List(ctx, resourceKey, 0)
 }
 
-func (s *resourceService) DeleteResource(ctx context.Context, objectKey types.ObjectKey) error {
+func (s *resourceService) DeleteResource(ctx context.Context, params Params) error {
+	objectKey, err := s.getObjectKeyFromParams(ctx, params)
+	if err != nil {
+		return err
+	}
 	return s.repo.MarkDeleted(ctx, objectKey)
 }
 
-func (s *resourceService) PatchResource(ctx context.Context, objectKey types.ObjectKey, patchData []byte) (*unstructured.Unstructured, error) {
-	existingResource, err := s.GetResource(ctx, objectKey)
+func (s *resourceService) PatchResource(ctx context.Context, params Params, patchData []byte) (*unstructured.Unstructured, error) {
+	objectKey, err := s.getObjectKeyFromParams(ctx, params)
+	if err != nil {
+		return nil, err
+	}
+
+	existingResource, err := s.GetResource(ctx, params)
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +151,7 @@ func (s *resourceService) PatchResource(ctx context.Context, objectKey types.Obj
 
 	patch, err := jsonpatch.DecodePatch(patchData)
 	if err != nil {
-		return nil, internalerrors.NewInvalidResourceError("failed to decode patch: " + err.Error())
+		return nil, internalerrors.NewInvalidInputError("failed to decode patch: " + err.Error())
 	}
 
 	if err := s.validatePatchOperations(patch); err != nil {
@@ -95,7 +160,7 @@ func (s *resourceService) PatchResource(ctx context.Context, objectKey types.Obj
 
 	patchedJSON, err := patch.Apply(existingJSON)
 	if err != nil {
-		return nil, internalerrors.NewInvalidResourceError("failed to apply patch: " + err.Error())
+		return nil, internalerrors.NewInvalidInputError("failed to apply patch: " + err.Error())
 	}
 
 	patchedResource, err := s.convertJSONToUnstructured(patchedJSON)
@@ -104,7 +169,7 @@ func (s *resourceService) PatchResource(ctx context.Context, objectKey types.Obj
 	}
 
 	if err := s.schemaService.ValidateResource(ctx, patchedResource); err != nil {
-		return nil, internalerrors.NewInvalidResourceError("schema validation failed for patched resource")
+		return nil, err
 	}
 
 	if err := s.repo.Replace(ctx, objectKey, patchedResource); err != nil {
@@ -117,7 +182,7 @@ func (s *resourceService) PatchResource(ctx context.Context, objectKey types.Obj
 func (s *resourceService) convertJSONToUnstructured(jsonData []byte) (*unstructured.Unstructured, error) {
 	var obj unstructured.Unstructured
 	if err := json.Unmarshal(jsonData, &obj); err != nil {
-		return nil, internalerrors.NewInvalidResourceError("failed to unmarshal object")
+		return nil, internalerrors.NewInvalidInputError("failed to unmarshal object")
 	}
 	return &obj, nil
 }
@@ -133,7 +198,7 @@ func (s *resourceService) validatePatchOperations(patch jsonpatch.Patch) error {
 
 			for _, sensitivePath := range SENSITIVE_PATHS {
 				if path == sensitivePath {
-					return internalerrors.NewInvalidResourceError(
+					return internalerrors.NewInvalidInputError(
 						fmt.Sprintf("patch operation %d: cannot modify sensitive field %s", i, path))
 				}
 			}

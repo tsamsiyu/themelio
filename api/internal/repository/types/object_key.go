@@ -17,11 +17,17 @@ type ObjectKey struct {
 	Name      string `json:"name"`
 }
 
-// NewObjectKey creates a new ObjectKey
-func NewObjectKey(group, version, kind, namespace, name string) ObjectKey {
-	if namespace == "" {
-		namespace = "default"
+func NewClusterObjectKey(group, version, kind, name string) ObjectKey {
+	return ObjectKey{
+		Group:     group,
+		Version:   version,
+		Kind:      kind,
+		Namespace: "",
+		Name:      name,
 	}
+}
+
+func NewNamespacedObjectKey(group, version, kind, namespace, name string) ObjectKey {
 	return ObjectKey{
 		Group:     group,
 		Version:   version,
@@ -31,13 +37,7 @@ func NewObjectKey(group, version, kind, namespace, name string) ObjectKey {
 	}
 }
 
-// NewObjectKeyFromResource creates a new ObjectKey from an unstructured resource
 func NewObjectKeyFromResource(resource *unstructured.Unstructured) ObjectKey {
-	namespace := resource.GetNamespace()
-	if namespace == "" {
-		namespace = "default"
-	}
-
 	apiVersion := resource.GetAPIVersion()
 	group := ""
 	version := apiVersion
@@ -47,13 +47,14 @@ func NewObjectKeyFromResource(resource *unstructured.Unstructured) ObjectKey {
 		version = parts[1]
 	}
 
-	return ObjectKey{
-		Group:     group,
-		Version:   version,
-		Kind:      resource.GetKind(),
-		Namespace: namespace,
-		Name:      resource.GetName(),
+	kind := resource.GetKind()
+	namespace := resource.GetNamespace()
+	name := resource.GetName()
+
+	if namespace == "" {
+		return NewClusterObjectKey(group, version, kind, name)
 	}
+	return NewNamespacedObjectKey(group, version, kind, namespace, name)
 }
 
 // ToGroupVersionKind returns the GroupVersionKind part of the ObjectKey
@@ -75,22 +76,28 @@ func (k ObjectKey) ToResourceKey() ResourceKey {
 	}
 }
 
-// ParseObjectKey parses a key string back to ObjectKey (requires all 5 parts)
 func ParseObjectKey(key string) (ObjectKey, error) {
 	key = strings.TrimPrefix(key, "/")
 	parts := strings.Split(key, "/")
 
-	if len(parts) != 5 {
-		return ObjectKey{}, fmt.Errorf("invalid object key format: expected exactly 5 parts, got %d", len(parts))
+	if len(parts) == 4 {
+		return ObjectKey{
+			Group:     parts[0],
+			Version:   parts[1],
+			Kind:      parts[2],
+			Namespace: "",
+			Name:      parts[3],
+		}, nil
+	} else if len(parts) == 5 {
+		return ObjectKey{
+			Group:     parts[0],
+			Version:   parts[1],
+			Kind:      parts[2],
+			Namespace: parts[3],
+			Name:      parts[4],
+		}, nil
 	}
-
-	return ObjectKey{
-		Group:     parts[0],
-		Version:   parts[1],
-		Kind:      parts[2],
-		Namespace: parts[3],
-		Name:      parts[4],
-	}, nil
+	return ObjectKey{}, fmt.Errorf("invalid object key format: expected 4 or 5 parts, got %d", len(parts))
 }
 
 // HasPrefix checks if the given key is a prefix of this ObjectKey
@@ -99,8 +106,10 @@ func (k ObjectKey) HasPrefix(prefix string) bool {
 	return strings.HasPrefix(keyStr, prefix)
 }
 
-// ToKey returns the string representation of the ObjectKey for database operations
 func (k ObjectKey) ToKey() string {
+	if k.Namespace == "" {
+		return fmt.Sprintf("/%s/%s/%s/%s", k.Group, k.Version, k.Kind, k.Name)
+	}
 	return fmt.Sprintf("/%s/%s/%s/%s/%s", k.Group, k.Version, k.Kind, k.Namespace, k.Name)
 }
 

@@ -41,7 +41,7 @@ func mapError(err error, logger *zap.Logger) (int, interface{}) {
 			zap.String("operation", e.Operation),
 			zap.Error(e.Err))
 		return http.StatusBadRequest, gin.H{"error": "Request serialization failed"}
-	case *errors.InvalidResourceError:
+	case *errors.InvalidInputError:
 		return http.StatusBadRequest, gin.H{
 			"error": e.Error(),
 		}

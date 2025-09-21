@@ -154,7 +154,13 @@ func TestPatchResource_InvalidPatch(t *testing.T) {
 	service := NewResourceService(logger, mockRepo, mockSchema)
 
 	ctx := context.Background()
-	objectKey := types.NewObjectKey("example.com", "v1", "TestResource", "default", "test-resource")
+	params := Params{
+		Group:     "example.com",
+		Version:   "v1",
+		Kind:      "TestResource",
+		Namespace: "default",
+		Name:      "test-resource",
+	}
 
 	existingResource := &unstructured.Unstructured{
 		Object: map[string]interface{}{
@@ -170,6 +176,16 @@ func TestPatchResource_InvalidPatch(t *testing.T) {
 		},
 	}
 
+	crd := &themeliotypes.CustomResourceDefinition{
+		Spec: themeliotypes.CustomResourceDefinitionSpec{
+			Group: "example.com",
+			Kind:  "TestResource",
+			Scope: themeliotypes.ResourceScopeNamespaced,
+		},
+	}
+	mockSchema.On("GetCRD", ctx, "example.com", "TestResource").Return(crd, nil)
+
+	objectKey := types.NewNamespacedObjectKey("example.com", "v1", "TestResource", "default", "test-resource")
 	mockRepo.(*mockResourceRepository).On("Get", ctx, objectKey).Return(existingResource, nil)
 
 	invalidPatchData := []byte(`[
@@ -180,7 +196,7 @@ func TestPatchResource_InvalidPatch(t *testing.T) {
 		}
 	]`)
 
-	result, err := service.PatchResource(ctx, objectKey, invalidPatchData)
+	result, err := service.PatchResource(ctx, params, invalidPatchData)
 
 	assert.Error(t, err)
 	assert.Nil(t, result)

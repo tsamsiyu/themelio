@@ -55,7 +55,7 @@ func OwnerRefToObjectKey(ownerRef metav1.OwnerReference, namespace string) Objec
 		version = parts[1]
 	}
 
-	return NewObjectKey(group, version, ownerRef.Kind, namespace, ownerRef.Name)
+	return NewNamespacedObjectKey(group, version, ownerRef.Kind, namespace, ownerRef.Name)
 }
 
 func CalculateOwnerReferenceDiff(oldOwnerRefs, newOwnerRefs []metav1.OwnerReference) OwnerReferenceDiff {

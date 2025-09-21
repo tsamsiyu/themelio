@@ -1,16 +1,16 @@
 package errors
 
-// InvalidResourceError represents when a resource has an invalid format
-type InvalidResourceError struct {
+// InvalidInputError represents when a resource has an invalid format
+type InvalidInputError struct {
 	Message string
 }
 
-func (e *InvalidResourceError) Error() string {
+func (e *InvalidInputError) Error() string {
 	return e.Message
 }
 
-func NewInvalidResourceError(message string) *InvalidResourceError {
-	return &InvalidResourceError{
+func NewInvalidInputError(message string) *InvalidInputError {
+	return &InvalidInputError{
 		Message: message,
 	}
 }

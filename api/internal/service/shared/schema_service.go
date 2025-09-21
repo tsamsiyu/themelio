@@ -56,7 +56,7 @@ func (s *schemaService) ValidateResource(ctx context.Context, obj *unstructured.
 	}
 
 	if schema == nil {
-		return internalerrors.NewInvalidResourceError("Schema not found for version: " + k8sGVK.Version)
+		return internalerrors.NewInvalidInputError("Schema not found for version: " + k8sGVK.Version)
 	}
 
 	validator, _, err := validation.NewSchemaValidator(schema)
@@ -66,7 +66,7 @@ func (s *schemaService) ValidateResource(ctx context.Context, obj *unstructured.
 
 	allErrs := validation.ValidateCustomResource(nil, obj, validator)
 	if len(allErrs) > 0 {
-		return internalerrors.NewInvalidResourceError("Resource validation failed")
+		return internalerrors.NewInvalidInputError("Resource validation failed")
 	}
 
 	return nil

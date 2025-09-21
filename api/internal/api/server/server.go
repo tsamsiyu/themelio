@@ -34,10 +34,10 @@ func NewRouter(logger *zap.Logger, resourceHandler *handlers.ResourceHandler) *g
 		resources := api.Group("/resources")
 		{
 			resources.PUT("/:group/:version/:kind", resourceHandler.ReplaceResource)
-			resources.GET("/:group/:version/:kind/:namespace/:name", resourceHandler.GetResource)
-			resources.GET("/:group/:version/:kind/:namespace", resourceHandler.ListResources)
-			resources.DELETE("/:group/:version/:kind/:namespace/:name", resourceHandler.DeleteResource)
-			resources.PATCH("/:group/:version/:kind/:namespace/:name", resourceHandler.PatchResource)
+			resources.GET("/:group/:version/:kind/:name", resourceHandler.GetResource)
+			resources.GET("/:group/:version/:kind", resourceHandler.ListResources)
+			resources.DELETE("/:group/:version/:kind/:name", resourceHandler.DeleteResource)
+			resources.PATCH("/:group/:version/:kind/:name", resourceHandler.PatchResource)
 		}
 	}
 

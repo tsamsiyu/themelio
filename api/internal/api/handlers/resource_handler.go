@@ -8,7 +8,6 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/tsamsiyu/themelio/api/internal/api/errors"
-	"github.com/tsamsiyu/themelio/api/internal/repository/types"
 	"github.com/tsamsiyu/themelio/api/internal/service"
 )
 
@@ -31,7 +30,7 @@ func NewResourceHandler(
 }
 
 func (h *ResourceHandler) ReplaceResource(c *gin.Context) {
-	objectKey := h.getObjectKeyFromParams(c)
+	params := h.getParamsFromContext(c)
 
 	jsonData, err := c.GetRawData()
 	if err != nil {
@@ -39,7 +38,7 @@ func (h *ResourceHandler) ReplaceResource(c *gin.Context) {
 		return
 	}
 
-	err = h.resourceService.ReplaceResource(c.Request.Context(), objectKey, jsonData)
+	err = h.resourceService.ReplaceResource(c.Request.Context(), params, jsonData)
 	if err != nil {
 		c.Error(err)
 		return
@@ -49,9 +48,9 @@ func (h *ResourceHandler) ReplaceResource(c *gin.Context) {
 }
 
 func (h *ResourceHandler) GetResource(c *gin.Context) {
-	objectKey := h.getObjectKeyFromParams(c)
+	params := h.getParamsFromContext(c)
 
-	resource, err := h.resourceService.GetResource(c.Request.Context(), objectKey)
+	resource, err := h.resourceService.GetResource(c.Request.Context(), params)
 	if err != nil {
 		c.Error(err)
 		return
@@ -61,10 +60,9 @@ func (h *ResourceHandler) GetResource(c *gin.Context) {
 }
 
 func (h *ResourceHandler) ListResources(c *gin.Context) {
-	objectKey := h.getObjectKeyFromParams(c)
-	resourceKey := objectKey.ToResourceKey()
+	params := h.getParamsFromContext(c)
 
-	resources, err := h.resourceService.ListResources(c.Request.Context(), resourceKey)
+	resources, err := h.resourceService.ListResources(c.Request.Context(), params)
 	if err != nil {
 		c.Error(err)
 		return
@@ -79,9 +77,9 @@ func (h *ResourceHandler) ListResources(c *gin.Context) {
 }
 
 func (h *ResourceHandler) DeleteResource(c *gin.Context) {
-	objectKey := h.getObjectKeyFromParams(c)
+	params := h.getParamsFromContext(c)
 
-	err := h.resourceService.DeleteResource(c.Request.Context(), objectKey)
+	err := h.resourceService.DeleteResource(c.Request.Context(), params)
 	if err != nil {
 		c.Error(err)
 		return
@@ -91,7 +89,7 @@ func (h *ResourceHandler) DeleteResource(c *gin.Context) {
 }
 
 func (h *ResourceHandler) PatchResource(c *gin.Context) {
-	objectKey := h.getObjectKeyFromParams(c)
+	params := h.getParamsFromContext(c)
 
 	patchData, err := c.GetRawData()
 	if err != nil {
@@ -99,7 +97,7 @@ func (h *ResourceHandler) PatchResource(c *gin.Context) {
 		return
 	}
 
-	patchedResource, err := h.resourceService.PatchResource(c.Request.Context(), objectKey, patchData)
+	patchedResource, err := h.resourceService.PatchResource(c.Request.Context(), params, patchData)
 	if err != nil {
 		c.Error(err)
 		return
@@ -108,12 +106,18 @@ func (h *ResourceHandler) PatchResource(c *gin.Context) {
 	c.JSON(http.StatusOK, patchedResource)
 }
 
-func (h *ResourceHandler) getObjectKeyFromParams(c *gin.Context) types.ObjectKey {
+func (h *ResourceHandler) getParamsFromContext(c *gin.Context) service.Params {
 	group := c.Param("group")
 	version := c.Param("version")
 	kind := c.Param("kind")
-	namespace := c.Param("namespace")
+	namespace := c.Query("namespace")
 	name := c.Param("name")
 
-	return types.NewObjectKey(group, version, kind, namespace, name)
+	return service.Params{
+		Group:     group,
+		Version:   version,
+		Kind:      kind,
+		Namespace: namespace,
+		Name:      name,
+	}
 }
