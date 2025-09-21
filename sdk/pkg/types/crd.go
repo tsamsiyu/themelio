@@ -1,7 +1,6 @@
 package types
 
 import (
-	"k8s.io/apiextensions-apiserver/pkg/apis/apiextensions"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -15,20 +14,20 @@ type CustomResourceDefinition struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   CustomResourceDefinitionSpec   `json:"spec,omitempty"`
-	Status CustomResourceDefinitionStatus `json:"status,omitempty"`
+	Spec   CustomResourceDefinitionSpec   `json:"spec,omitempty" validate:"required"`
+	Status CustomResourceDefinitionStatus `json:"status,omitempty" validate:"required"`
 }
 
 type CustomResourceDefinitionSpec struct {
-	Group    string                            `json:"group"`
-	Kind     string                            `json:"kind"`
-	Scope    ResourceScope                     `json:"scope"`
-	Versions []CustomResourceDefinitionVersion `json:"versions"`
+	Group    string                            `json:"group" validate:"required"`
+	Kind     string                            `json:"kind" validate:"required"`
+	Scope    ResourceScope                     `json:"scope" validate:"required"`
+	Versions []CustomResourceDefinitionVersion `json:"versions" validate:"required,min=1"`
 }
 
 type CustomResourceDefinitionVersion struct {
-	Name   string                         `json:"name"`
-	Schema *apiextensions.JSONSchemaProps `json:"schema"`
+	Name   string      `json:"name"`
+	Schema interface{} `json:"schema"`
 }
 
 type CustomResourceDefinitionStatus struct {

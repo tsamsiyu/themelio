@@ -2,29 +2,23 @@ package service
 
 import (
 	"context"
-	"errors"
-	"fmt"
+	"encoding/json"
 
 	"go.uber.org/zap"
-	"k8s.io/apiextensions-apiserver/pkg/apis/apiextensions"
-	"k8s.io/apiextensions-apiserver/pkg/apiserver/validation"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	internalerrors "github.com/tsamsiyu/themelio/api/internal/errors"
 	"github.com/tsamsiyu/themelio/api/internal/repository"
 	themeliotypes "github.com/tsamsiyu/themelio/sdk/pkg/types"
+	themeliovalidation "github.com/tsamsiyu/themelio/sdk/pkg/validation"
 )
 
 type SchemaService interface {
 	// CRD management methods
-	CreateCRD(ctx context.Context, crd *themeliotypes.CustomResourceDefinition) error
-	UpdateCRD(ctx context.Context, crd *themeliotypes.CustomResourceDefinition) error
-	DeleteCRD(ctx context.Context, group, kind string) error
-	GetCRD(ctx context.Context, group, kind string) (*themeliotypes.CustomResourceDefinition, error)
-	ListCRDs(ctx context.Context) ([]*themeliotypes.CustomResourceDefinition, error)
-
-	// Resource validation
-	ValidateResource(ctx context.Context, obj *unstructured.Unstructured) error
+	Replace(ctx context.Context, jsonData []byte) error
+	Delete(ctx context.Context, group, kind string) error
+	Get(ctx context.Context, group, kind string) (*themeliotypes.CustomResourceDefinition, error)
+	List(ctx context.Context) ([]*themeliotypes.CustomResourceDefinition, error)
 }
 
 type schemaService struct {
@@ -39,70 +33,29 @@ func NewSchemaService(logger *zap.Logger, repo repository.SchemaRepository) Sche
 	}
 }
 
-func (s *schemaService) ValidateResource(ctx context.Context, obj *unstructured.Unstructured) error {
-	k8sGVK := obj.GetObjectKind().GroupVersionKind()
+func (s *schemaService) Replace(ctx context.Context, jsonData []byte) error {
+	var crd themeliotypes.CustomResourceDefinition
+	if err := json.Unmarshal(jsonData, &crd); err != nil {
+		return internalerrors.NewInvalidInputError("failed to parse CRD JSON: " + err.Error())
+	}
 
-	crd, err := s.GetCRD(ctx, k8sGVK.Group, k8sGVK.Kind)
-	if err != nil {
+	if err := themeliovalidation.ValidateCRD(&crd); err != nil {
+		return internalerrors.NewInvalidInputError(err.Error())
+	}
+
+	if err := s.repo.StoreCRD(ctx, &crd); err != nil {
 		return err
 	}
 
-	var schema *apiextensions.JSONSchemaProps
-	for _, version := range crd.Spec.Versions {
-		if version.Name == k8sGVK.Version {
-			schema = version.Schema
-			break
-		}
-	}
-
-	if schema == nil {
-		return internalerrors.NewInvalidInputError("Schema not found for version: " + k8sGVK.Version)
-	}
-
-	validator, _, err := validation.NewSchemaValidator(schema)
-	if err != nil {
-		return fmt.Errorf("failed to create validator: %w", err)
-	}
-
-	allErrs := validation.ValidateCustomResource(nil, obj, validator)
-	if len(allErrs) > 0 {
-		return internalerrors.NewInvalidInputError("Resource validation failed")
-	}
-
-	return nil
-}
-
-// CRD management methods
-func (s *schemaService) CreateCRD(ctx context.Context, crd *themeliotypes.CustomResourceDefinition) error {
-	existing, err := s.repo.GetCRD(ctx, crd.Spec.Group, crd.Spec.Kind)
-	if err == nil && existing != nil {
-		return errors.New("CRD already exists")
-	}
-
-	if err := s.repo.StoreCRD(ctx, crd); err != nil {
-		return err
-	}
-
-	s.logger.Info("CRD created successfully",
+	s.logger.Info("CRD replaced successfully",
 		zap.String("group", crd.Spec.Group),
 		zap.String("kind", crd.Spec.Kind))
 
 	return nil
 }
 
-func (s *schemaService) UpdateCRD(ctx context.Context, crd *themeliotypes.CustomResourceDefinition) error {
-	if err := s.repo.StoreCRD(ctx, crd); err != nil {
-		return err
-	}
-
-	s.logger.Info("CRD updated successfully",
-		zap.String("group", crd.Spec.Group),
-		zap.String("kind", crd.Spec.Kind))
-
-	return nil
-}
-
-func (s *schemaService) DeleteCRD(ctx context.Context, group, kind string) error {
+// todo: do not allow deleting CRDs that are in use
+func (s *schemaService) Delete(ctx context.Context, group, kind string) error {
 	if err := s.repo.DeleteCRD(ctx, group, kind); err != nil {
 		return err
 	}
@@ -114,10 +67,32 @@ func (s *schemaService) DeleteCRD(ctx context.Context, group, kind string) error
 	return nil
 }
 
-func (s *schemaService) GetCRD(ctx context.Context, group, kind string) (*themeliotypes.CustomResourceDefinition, error) {
+func (s *schemaService) Get(ctx context.Context, group, kind string) (*themeliotypes.CustomResourceDefinition, error) {
 	return s.repo.GetCRD(ctx, group, kind)
 }
 
-func (s *schemaService) ListCRDs(ctx context.Context) ([]*themeliotypes.CustomResourceDefinition, error) {
+func (s *schemaService) List(ctx context.Context) ([]*themeliotypes.CustomResourceDefinition, error) {
 	return s.repo.ListCRDs(ctx)
+}
+
+func ValidateResource(obj *unstructured.Unstructured, crd *themeliotypes.CustomResourceDefinition) error {
+	gvk := obj.GroupVersionKind()
+
+	var schema interface{}
+	for _, version := range crd.Spec.Versions {
+		if version.Name == gvk.Version {
+			schema = version.Schema
+			break
+		}
+	}
+
+	if schema == nil {
+		return internalerrors.NewInvalidInputError("Schema not found for version: " + gvk.Version)
+	}
+
+	if err := themeliovalidation.ValidateResourceAgainstSchema(obj.Object, schema); err != nil {
+		return internalerrors.NewInvalidInputError(err.Error())
+	}
+
+	return nil
 }

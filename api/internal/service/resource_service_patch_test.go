@@ -22,22 +22,17 @@ type mockSchemaService struct {
 }
 
 // CRD management methods
-func (m *mockSchemaService) CreateCRD(ctx context.Context, crd *themeliotypes.CustomResourceDefinition) error {
-	args := m.Called(ctx, crd)
+func (m *mockSchemaService) Replace(ctx context.Context, jsonData []byte) error {
+	args := m.Called(ctx, jsonData)
 	return args.Error(0)
 }
 
-func (m *mockSchemaService) UpdateCRD(ctx context.Context, crd *themeliotypes.CustomResourceDefinition) error {
-	args := m.Called(ctx, crd)
-	return args.Error(0)
-}
-
-func (m *mockSchemaService) DeleteCRD(ctx context.Context, group, kind string) error {
+func (m *mockSchemaService) Delete(ctx context.Context, group, kind string) error {
 	args := m.Called(ctx, group, kind)
 	return args.Error(0)
 }
 
-func (m *mockSchemaService) GetCRD(ctx context.Context, group, kind string) (*themeliotypes.CustomResourceDefinition, error) {
+func (m *mockSchemaService) Get(ctx context.Context, group, kind string) (*themeliotypes.CustomResourceDefinition, error) {
 	args := m.Called(ctx, group, kind)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -45,7 +40,7 @@ func (m *mockSchemaService) GetCRD(ctx context.Context, group, kind string) (*th
 	return args.Get(0).(*themeliotypes.CustomResourceDefinition), args.Error(1)
 }
 
-func (m *mockSchemaService) ListCRDs(ctx context.Context) ([]*themeliotypes.CustomResourceDefinition, error) {
+func (m *mockSchemaService) List(ctx context.Context) ([]*themeliotypes.CustomResourceDefinition, error) {
 	args := m.Called(ctx)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -183,7 +178,7 @@ func TestPatchResource_InvalidPatch(t *testing.T) {
 			Scope: themeliotypes.ResourceScopeNamespaced,
 		},
 	}
-	mockSchema.On("GetCRD", ctx, "example.com", "TestResource").Return(crd, nil)
+	mockSchema.On("Get", ctx, "example.com", "TestResource").Return(crd, nil)
 
 	objectKey := types.NewNamespacedObjectKey("example.com", "v1", "TestResource", "default", "test-resource")
 	mockRepo.(*mockResourceRepository).On("Get", ctx, objectKey).Return(existingResource, nil)

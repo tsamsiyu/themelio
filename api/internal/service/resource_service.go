@@ -53,56 +53,30 @@ func NewResourceService(logger *zap.Logger, repo repository.ResourceRepository, 
 	}
 }
 
-func (s *resourceService) getObjectKeyFromParams(ctx context.Context, params Params) (types.ObjectKey, error) {
-	crd, err := s.schemaService.GetCRD(ctx, params.Group, params.Kind)
-	if err != nil {
-		return types.ObjectKey{}, err
-	}
-
-	if crd.Spec.Scope == themeliotypes.ResourceScopeCluster {
-		// we just ignore namespace here as it's not needed for cluster-scoped resources
-		return types.NewClusterObjectKey(params.Group, params.Version, params.Kind, params.Name), nil
-	}
-
-	if params.Namespace == "" {
-		return types.ObjectKey{}, internalerrors.NewInvalidInputError("namespace is required for namespaced resource")
-	}
-	return types.NewNamespacedObjectKey(params.Group, params.Version, params.Kind, params.Namespace, params.Name), nil
-}
-
-func (s *resourceService) getResourceKeyFromParams(ctx context.Context, params Params) (types.ResourceKey, error) {
-	crd, err := s.schemaService.GetCRD(ctx, params.Group, params.Kind)
-	if err != nil {
-		return types.ResourceKey{}, err
-	}
-
-	if crd.Spec.Scope == themeliotypes.ResourceScopeCluster {
-		// we just ignore namespace here as it's not needed for cluster-scoped resources
-		return types.NewClusterResourceKey(params.Group, params.Version, params.Kind), nil
-	}
-
-	if params.Namespace == "" {
-		return types.ResourceKey{}, internalerrors.NewInvalidInputError("namespace is required for namespaced resource")
-	}
-	return types.NewNamespacedResourceKey(params.Group, params.Version, params.Kind, params.Namespace), nil
-}
-
 func (s *resourceService) ReplaceResource(ctx context.Context, params Params, jsonData []byte) error {
-	objectKey, err := s.getObjectKeyFromParams(ctx, params)
+	payload, err := s.convertJSONToUnstructured(jsonData)
 	if err != nil {
 		return err
 	}
 
-	resource, err := s.convertJSONToUnstructured(jsonData)
+	paramsWithName := params
+	paramsWithName.Name = payload.GetName()
+
+	crd, err := s.schemaService.Get(ctx, paramsWithName.Group, paramsWithName.Kind)
 	if err != nil {
 		return err
 	}
 
-	if err := s.schemaService.ValidateResource(ctx, resource); err != nil {
+	objectKey, err := getObjectKeyFromParams(crd, &paramsWithName)
+	if err != nil {
 		return err
 	}
 
-	if err := s.repo.Replace(ctx, objectKey, resource); err != nil {
+	if err := sharedservice.ValidateResource(payload, crd); err != nil {
+		return err
+	}
+
+	if err := s.repo.Replace(ctx, objectKey, payload); err != nil {
 		return err
 	}
 
@@ -110,31 +84,54 @@ func (s *resourceService) ReplaceResource(ctx context.Context, params Params, js
 }
 
 func (s *resourceService) GetResource(ctx context.Context, params Params) (*unstructured.Unstructured, error) {
-	objectKey, err := s.getObjectKeyFromParams(ctx, params)
+	crd, err := s.schemaService.Get(ctx, params.Group, params.Kind)
 	if err != nil {
 		return nil, err
 	}
+
+	objectKey, err := getObjectKeyFromParams(crd, &params)
+	if err != nil {
+		return nil, err
+	}
+
 	return s.repo.Get(ctx, objectKey)
 }
 
 func (s *resourceService) ListResources(ctx context.Context, params Params) ([]*unstructured.Unstructured, error) {
-	resourceKey, err := s.getResourceKeyFromParams(ctx, params)
+	crd, err := s.schemaService.Get(ctx, params.Group, params.Kind)
 	if err != nil {
 		return nil, err
 	}
+
+	resourceKey, err := getResourceKeyFromParams(crd, &params)
+	if err != nil {
+		return nil, err
+	}
+
 	return s.repo.List(ctx, resourceKey, 0)
 }
 
 func (s *resourceService) DeleteResource(ctx context.Context, params Params) error {
-	objectKey, err := s.getObjectKeyFromParams(ctx, params)
+	crd, err := s.schemaService.Get(ctx, params.Group, params.Kind)
 	if err != nil {
 		return err
 	}
+
+	objectKey, err := getObjectKeyFromParams(crd, &params)
+	if err != nil {
+		return err
+	}
+
 	return s.repo.MarkDeleted(ctx, objectKey)
 }
 
 func (s *resourceService) PatchResource(ctx context.Context, params Params, patchData []byte) (*unstructured.Unstructured, error) {
-	objectKey, err := s.getObjectKeyFromParams(ctx, params)
+	crd, err := s.schemaService.Get(ctx, params.Group, params.Kind)
+	if err != nil {
+		return nil, err
+	}
+
+	objectKey, err := getObjectKeyFromParams(crd, &params)
 	if err != nil {
 		return nil, err
 	}
@@ -168,7 +165,7 @@ func (s *resourceService) PatchResource(ctx context.Context, params Params, patc
 		return nil, err
 	}
 
-	if err := s.schemaService.ValidateResource(ctx, patchedResource); err != nil {
+	if err := sharedservice.ValidateResource(patchedResource, crd); err != nil {
 		return nil, err
 	}
 
@@ -205,4 +202,34 @@ func (s *resourceService) validatePatchOperations(patch jsonpatch.Patch) error {
 		}
 	}
 	return nil
+}
+
+func getObjectKeyFromParams(
+	crd *themeliotypes.CustomResourceDefinition,
+	params *Params,
+) (types.ObjectKey, error) {
+	if crd.Spec.Scope == themeliotypes.ResourceScopeCluster {
+		// we just ignore namespace here as it's not needed for cluster-scoped resources
+		return types.NewClusterObjectKey(params.Group, params.Version, params.Kind, params.Name), nil
+	}
+
+	if params.Namespace == "" {
+		return types.ObjectKey{}, internalerrors.NewInvalidInputError("namespace is required for namespaced resource")
+	}
+	return types.NewNamespacedObjectKey(params.Group, params.Version, params.Kind, params.Namespace, params.Name), nil
+}
+
+func getResourceKeyFromParams(
+	crd *themeliotypes.CustomResourceDefinition,
+	params *Params,
+) (types.ResourceKey, error) {
+	if crd.Spec.Scope == themeliotypes.ResourceScopeCluster {
+		// we just ignore namespace here as it's not needed for cluster-scoped resources
+		return types.NewClusterResourceKey(params.Group, params.Version, params.Kind), nil
+	}
+
+	if params.Namespace == "" {
+		return types.ResourceKey{}, internalerrors.NewInvalidInputError("namespace is required for namespaced resource")
+	}
+	return types.NewNamespacedResourceKey(params.Group, params.Version, params.Kind, params.Namespace), nil
 }
