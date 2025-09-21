@@ -26,7 +26,7 @@ type ResourceStore interface {
 	BuildPutTxOp(key types.ObjectKey, resource *unstructured.Unstructured) (clientv3.Op, error)
 
 	// Watch operations
-	Watch(ctx context.Context, key types.DbKey, eventChan chan<- types.WatchEvent) error
+	Watch(ctx context.Context, key types.ResourceKey, eventChan chan<- types.WatchEvent) error
 }
 
 type resourceStore struct {
@@ -96,7 +96,7 @@ func (s *resourceStore) BuildPutTxOp(key types.ObjectKey, resource *unstructured
 	return clientv3.OpPut(key.String(), data), nil
 }
 
-func (s *resourceStore) Watch(ctx context.Context, key types.DbKey, eventChan chan<- types.WatchEvent) error {
+func (s *resourceStore) Watch(ctx context.Context, key types.ResourceKey, eventChan chan<- types.WatchEvent) error {
 	go s.watchResources(ctx, key.ToKey(), eventChan)
 	return nil
 }

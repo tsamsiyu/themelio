@@ -20,7 +20,7 @@ type ResourceRepository interface {
 	Get(ctx context.Context, key types.ObjectKey) (*unstructured.Unstructured, error)
 	List(ctx context.Context, key types.ResourceKey, limit int) ([]*unstructured.Unstructured, error)
 	Delete(ctx context.Context, key types.ObjectKey) error
-	Watch(ctx context.Context, key types.DbKey, eventChan chan<- types.WatchEvent) error
+	Watch(ctx context.Context, key types.ResourceKey, eventChan chan<- types.WatchEvent) error
 	MarkDeleted(ctx context.Context, key types.ObjectKey) error
 	ListDeletions(ctx context.Context, lockKey string, lockExp time.Duration, batchLimit int) (*types.DeletionBatch, error)
 }
@@ -121,7 +121,7 @@ func (r *resourceRepository) Delete(ctx context.Context, key types.ObjectKey) er
 	return r.clientWrapper.ExecuteTransaction(ctx, ops)
 }
 
-func (r *resourceRepository) Watch(ctx context.Context, key types.DbKey, eventChan chan<- types.WatchEvent) error {
+func (r *resourceRepository) Watch(ctx context.Context, key types.ResourceKey, eventChan chan<- types.WatchEvent) error {
 	watchChan := r.watchManager.Watch(ctx, key)
 	go func() {
 		defer close(eventChan)

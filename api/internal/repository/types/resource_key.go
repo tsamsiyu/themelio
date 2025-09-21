@@ -7,12 +7,12 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
-// ResourceKey represents a resource type and namespace (without specific name)
+// ResourceKey represents unique ID of a resource
 type ResourceKey struct {
 	Group     string
 	Version   string
 	Kind      string
-	Namespace string
+	Namespace string // optional: if empty, the resource is cluster-scoped
 }
 
 func NewClusterResourceKey(group, version, kind string) ResourceKey {
@@ -30,25 +30,6 @@ func NewNamespacedResourceKey(group, version, kind, namespace string) ResourceKe
 		Version:   version,
 		Kind:      kind,
 		Namespace: namespace,
-	}
-}
-
-// NewResourceKeyFromObjectKey creates a ResourceKey from an ObjectKey (without name)
-func NewResourceKeyFromObjectKey(objectKey ObjectKey) ResourceKey {
-	return ResourceKey{
-		Group:     objectKey.Group,
-		Version:   objectKey.Version,
-		Kind:      objectKey.Kind,
-		Namespace: objectKey.Namespace,
-	}
-}
-
-// ToGroupVersionKind returns the GroupVersionKind part of the ResourceKey
-func (k ResourceKey) ToGroupVersionKind() GroupVersionKind {
-	return GroupVersionKind{
-		Group:   k.Group,
-		Version: k.Version,
-		Kind:    k.Kind,
 	}
 }
 

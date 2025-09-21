@@ -55,19 +55,3 @@ func TestParseResourceKey_InvalidFormat(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "expected 3 or 4 parts, got 2")
 }
-
-func TestResourceKey_ToGroupVersionKind(t *testing.T) {
-	clusterKey := NewClusterResourceKey("rbac.authorization.k8s.io", "v1", "ClusterRole")
-	gvk := clusterKey.ToGroupVersionKind()
-
-	assert.Equal(t, "rbac.authorization.k8s.io", gvk.Group)
-	assert.Equal(t, "v1", gvk.Version)
-	assert.Equal(t, "ClusterRole", gvk.Kind)
-
-	namespacedKey := NewNamespacedResourceKey("rbac.authorization.k8s.io", "v1", "Role", "default")
-	gvk2 := namespacedKey.ToGroupVersionKind()
-
-	assert.Equal(t, "rbac.authorization.k8s.io", gvk2.Group)
-	assert.Equal(t, "v1", gvk2.Version)
-	assert.Equal(t, "Role", gvk2.Kind)
-}

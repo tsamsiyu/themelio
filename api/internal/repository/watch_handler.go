@@ -17,7 +17,7 @@ type WatchConfig struct {
 }
 
 type WatchHandler struct {
-	key          types.DbKey
+	key          types.ResourceKey
 	store        ResourceStore
 	logger       *zap.Logger
 	config       WatchConfig
@@ -30,7 +30,7 @@ type WatchHandler struct {
 }
 
 func NewWatchHandler(
-	key types.DbKey,
+	key types.ResourceKey,
 	store ResourceStore,
 	logger *zap.Logger,
 	config WatchConfig,
@@ -170,27 +170,7 @@ func (h *WatchHandler) processWatchEvents(ctx context.Context, watchChan <-chan 
 }
 
 func (h *WatchHandler) reconcile(ctx context.Context) error {
-	var resourceKey types.ResourceKey
-	var err error
-
-	switch key := h.key.(type) {
-	case types.ResourceKey:
-		resourceKey = key
-	case types.ObjectKey:
-		resourceKey = key.ToResourceKey()
-	case types.GroupVersionKind:
-		// For GVK, we need to list all namespaces, but this is complex
-		// For now, we'll skip reconciliation for GVK-only keys
-		return nil
-	default:
-		// Try to parse as ResourceKey string
-		resourceKey, err = types.ParseResourceKey(h.key.ToKey())
-		if err != nil {
-			return err
-		}
-	}
-
-	resources, err := h.store.List(ctx, resourceKey, 0)
+	resources, err := h.store.List(ctx, h.key, 0)
 	if err != nil {
 		return err
 	}

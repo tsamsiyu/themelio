@@ -8,13 +8,13 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
-// ObjectKey represents a unique identifier for a Kubernetes resource
+// ObjectKey represents a unique identifier of a resource
 type ObjectKey struct {
 	Group     string `json:"group"`
 	Version   string `json:"version"`
 	Kind      string `json:"kind"`
-	Namespace string `json:"namespace"`
 	Name      string `json:"name"`
+	Namespace string `json:"namespace"` // optional: if empty, the resource is cluster-scoped
 }
 
 func NewClusterObjectKey(group, version, kind, name string) ObjectKey {
@@ -55,15 +55,6 @@ func NewObjectKeyFromResource(resource *unstructured.Unstructured) ObjectKey {
 		return NewClusterObjectKey(group, version, kind, name)
 	}
 	return NewNamespacedObjectKey(group, version, kind, namespace, name)
-}
-
-// ToGroupVersionKind returns the GroupVersionKind part of the ObjectKey
-func (k ObjectKey) ToGroupVersionKind() GroupVersionKind {
-	return GroupVersionKind{
-		Group:   k.Group,
-		Version: k.Version,
-		Kind:    k.Kind,
-	}
 }
 
 // ToResourceKey returns the ResourceKey part of the ObjectKey (without name)

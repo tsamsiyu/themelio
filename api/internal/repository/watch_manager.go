@@ -29,7 +29,7 @@ func NewWatchManager(store ResourceStore, logger *zap.Logger, config WatchConfig
 	}
 }
 
-func (m *WatchManager) Watch(ctx context.Context, key types.DbKey) <-chan types.WatchEvent {
+func (m *WatchManager) Watch(ctx context.Context, key types.ResourceKey) <-chan types.WatchEvent {
 	clientChan := make(chan types.WatchEvent, 100)
 	keyStr := key.ToKey()
 
