@@ -17,15 +17,17 @@ import (
 // we don't need reversed references for owner references that are not blocking deletion
 
 type OwnerReferenceOpBuilder struct {
-	store  ResourceStore
-	logger *zap.Logger
+	store         ResourceStore
+	clientWrapper ClientWrapper
+	logger        *zap.Logger
 }
 
 // NewOwnerReferenceOpBuilder creates a new OwnerReferenceOpBuilder
-func NewOwnerReferenceOpBuilder(store ResourceStore, logger *zap.Logger) *OwnerReferenceOpBuilder {
+func NewOwnerReferenceOpBuilder(store ResourceStore, clientWrapper ClientWrapper, logger *zap.Logger) *OwnerReferenceOpBuilder {
 	return &OwnerReferenceOpBuilder{
-		store:  store,
-		logger: logger,
+		store:         store,
+		clientWrapper: clientWrapper,
+		logger:        logger,
 	}
 }
 
@@ -120,7 +122,7 @@ func (b *OwnerReferenceOpBuilder) GetReversedOwnerReferences(
 ) (types.ReversedOwnerReferenceSet, error) {
 	refKey := fmt.Sprintf("/ref%s", parentKey.String())
 
-	data, err := b.store.GetRaw(ctx, refKey)
+	data, err := b.clientWrapper.Get(ctx, refKey)
 	if err != nil && !types.IsNotFoundError(err) {
 		return nil, errors.Wrap(err, "failed to get owner references from etcd")
 	}

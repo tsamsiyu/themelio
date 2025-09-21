@@ -27,18 +27,20 @@ type ResourceRepository interface {
 
 type resourceRepository struct {
 	store             ResourceStore
+	clientWrapper     ClientWrapper
 	ownerRefOpBuilder *OwnerReferenceOpBuilder
 	deletionOpBuilder *DeletionOpBuilder
 	watchManager      *WatchManager
 	logger            *zap.Logger
 }
 
-func NewResourceRepository(logger *zap.Logger, store ResourceStore, watchConfig WatchConfig, backoffManager *lib.BackoffManager) ResourceRepository {
-	ownerRefOpBuilder := NewOwnerReferenceOpBuilder(store, logger)
-	deletionOpBuilder := NewDeletionOpBuilder(store, logger)
+func NewResourceRepository(logger *zap.Logger, store ResourceStore, clientWrapper ClientWrapper, watchConfig WatchConfig, backoffManager *lib.BackoffManager) ResourceRepository {
+	ownerRefOpBuilder := NewOwnerReferenceOpBuilder(store, clientWrapper, logger)
+	deletionOpBuilder := NewDeletionOpBuilder(store, clientWrapper, logger)
 	watchManager := NewWatchManager(store, logger, watchConfig, backoffManager)
 	return &resourceRepository{
 		store:             store,
+		clientWrapper:     clientWrapper,
 		ownerRefOpBuilder: ownerRefOpBuilder,
 		deletionOpBuilder: deletionOpBuilder,
 		watchManager:      watchManager,
@@ -59,11 +61,11 @@ func (r *resourceRepository) Replace(ctx context.Context, key types.ObjectKey, r
 
 	var ops []clientv3.Op
 
-	data, err := r.store.MarshalResource(resource)
+	setOp, err := r.store.BuildPutTxOp(key, resource)
 	if err != nil {
 		return err
 	}
-	ops = append(ops, clientv3.OpPut(key.String(), data))
+	ops = append(ops, setOp)
 
 	if len(diff.Deleted) > 0 || len(diff.Created) > 0 {
 		refOps, err := r.ownerRefOpBuilder.BuildDiffOperations(ctx, diff, key)
@@ -73,7 +75,7 @@ func (r *resourceRepository) Replace(ctx context.Context, key types.ObjectKey, r
 		ops = append(ops, refOps...)
 	}
 
-	return r.store.ExecuteTransaction(ctx, ops)
+	return r.clientWrapper.ExecuteTransaction(ctx, ops)
 }
 
 func (r *resourceRepository) Get(ctx context.Context, key types.ObjectKey) (*unstructured.Unstructured, error) {
@@ -116,7 +118,7 @@ func (r *resourceRepository) Delete(ctx context.Context, key types.ObjectKey) er
 	ops = append(ops, refOps...)
 	ops = append(ops, childrenCleanupOps...)
 
-	return r.store.ExecuteTransaction(ctx, ops)
+	return r.clientWrapper.ExecuteTransaction(ctx, ops)
 }
 
 func (r *resourceRepository) Watch(ctx context.Context, key types.DbKey, eventChan chan<- types.WatchEvent) error {
@@ -148,19 +150,17 @@ func (r *resourceRepository) MarkDeleted(ctx context.Context, key types.ObjectKe
 	now := metav1.NewTime(time.Now())
 	resource.SetDeletionTimestamp(&now)
 
-	updatedData, err := r.store.MarshalResource(resource)
-	if err != nil {
-		return internalerrors.NewMarshalingError("failed to marshal resource with deletion timestamp")
-	}
-
 	deletionOp, err := r.deletionOpBuilder.BuildMarkDeletionOperation(key)
 	if err != nil {
 		return errors.Wrap(err, "failed to build mark deletion operations")
 	}
 
-	updateOp := clientv3.OpPut(key.String(), updatedData)
+	updateOp, err := r.store.BuildPutTxOp(key, resource)
+	if err != nil {
+		return internalerrors.NewMarshalingError("failed to build set operation for resource with deletion timestamp")
+	}
 
-	return r.store.ExecuteTransaction(ctx, []clientv3.Op{*deletionOp, updateOp})
+	return r.clientWrapper.ExecuteTransaction(ctx, []clientv3.Op{*deletionOp, updateOp})
 }
 
 // ListDeletions returns a batch of resources marked for deletion using distributed locking

@@ -28,6 +28,7 @@ var CommonModule = fx.Options(
 		NewLogger,
 		NewETCDClient,
 		validator.New,
+		repository.NewClientWrapper,
 		repository.NewResourceStore,
 		NewResourceRepository,
 		repository.NewSchemaRepository,
@@ -102,7 +103,7 @@ func NewETCDClient(cfg *config.Config) (*clientv3.Client, error) {
 	return client, nil
 }
 
-func NewResourceRepository(logger *zap.Logger, store repository.ResourceStore) repository.ResourceRepository {
+func NewResourceRepository(logger *zap.Logger, store repository.ResourceStore, clientWrapper repository.ClientWrapper) repository.ResourceRepository {
 	watchConfig := repository.WatchConfig{
 		MaxRetries: 5,
 	}
@@ -113,7 +114,7 @@ func NewResourceRepository(logger *zap.Logger, store repository.ResourceStore) r
 		ResetAfter:        1 * time.Minute,
 	}
 	backoffManager := lib.NewBackoffManager(backoffConfig)
-	return repository.NewResourceRepository(logger, store, watchConfig, backoffManager)
+	return repository.NewResourceRepository(logger, store, clientWrapper, watchConfig, backoffManager)
 }
 
 func createTLSConfig(tlsCfg config.TLSConfig) (*tls.Config, error) {

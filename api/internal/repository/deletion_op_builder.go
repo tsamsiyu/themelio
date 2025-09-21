@@ -18,14 +18,16 @@ import (
 )
 
 type DeletionOpBuilder struct {
-	store  ResourceStore
-	logger *zap.Logger
+	store         ResourceStore
+	clientWrapper ClientWrapper
+	logger        *zap.Logger
 }
 
-func NewDeletionOpBuilder(store ResourceStore, logger *zap.Logger) *DeletionOpBuilder {
+func NewDeletionOpBuilder(store ResourceStore, clientWrapper ClientWrapper, logger *zap.Logger) *DeletionOpBuilder {
 	return &DeletionOpBuilder{
-		store:  store,
-		logger: logger,
+		store:         store,
+		clientWrapper: clientWrapper,
+		logger:        logger,
 	}
 }
 
@@ -86,11 +88,11 @@ func (b *DeletionOpBuilder) buildChildrenReferenceCleanupOps(
 			newOwnerRefs := removeOwnerReference(childOwnerRefs, resource.GetUID())
 			child.SetOwnerReferences(newOwnerRefs)
 
-			updatedData, err := b.store.MarshalResource(child)
+			setOp, err := b.store.BuildPutTxOp(childKey, child)
 			if err != nil {
-				return nil, errors.Wrap(err, "failed to marshal updated child resource")
+				return nil, errors.Wrap(err, "failed to build set operation for updated child resource")
 			}
-			ops = append(ops, clientv3.OpPut(childKey.String(), updatedData))
+			ops = append(ops, setOp)
 		}
 	}
 
@@ -127,7 +129,7 @@ func (b *DeletionOpBuilder) buildChildrenMarkDeletionOps(
 
 func (b *DeletionOpBuilder) ListDeletions(ctx context.Context, batchLimit int) ([]types.DeletionRecord, error) {
 	prefix := "/deletion/"
-	kvs, err := b.store.ListRaw(ctx, prefix, batchLimit)
+	kvs, err := b.clientWrapper.List(ctx, prefix, batchLimit)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to list deletion records from etcd")
 	}
@@ -145,19 +147,19 @@ func (b *DeletionOpBuilder) ListDeletions(ctx context.Context, batchLimit int) (
 }
 
 func (b *DeletionOpBuilder) AcquireDeletions(ctx context.Context, lockKey string, lockExp time.Duration, batchLimit int) (*types.DeletionBatch, error) {
-	leaseResp, err := b.store.GrantLease(ctx, int64(lockExp.Seconds()))
+	leaseResp, err := b.clientWrapper.GrantLease(ctx, int64(lockExp.Seconds()))
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to grant lease for deletion lock")
 	}
 
 	deletionRecords, err := b.ListDeletions(ctx, batchLimit)
 	if err != nil {
-		b.store.RevokeLease(ctx, leaseResp.ID)
+		b.clientWrapper.RevokeLease(ctx, leaseResp.ID)
 		return nil, err
 	}
 
 	if len(deletionRecords) == 0 {
-		b.store.RevokeLease(ctx, leaseResp.ID)
+		b.clientWrapper.RevokeLease(ctx, leaseResp.ID)
 		return &types.DeletionBatch{ObjectKeys: []types.ObjectKey{}, LeaseID: leaseResp.ID}, nil
 	}
 
@@ -172,7 +174,7 @@ func (b *DeletionOpBuilder) AcquireDeletions(ctx context.Context, lockKey string
 		noLockCompareOp := []clientv3.Cmp{clientv3.Compare(clientv3.Version(objectLockPath), "=", 0)}
 		leaseOp := []clientv3.Op{clientv3.OpPut(objectLockPath, lockKey, clientv3.WithLease(leaseResp.ID))}
 
-		txnResp, err = b.store.ExecuteConditionalTransaction(ctx, noLockCompareOp, leaseOp, nil)
+		txnResp, err = b.clientWrapper.ExecuteConditionalTransaction(ctx, noLockCompareOp, leaseOp, nil)
 		if err == nil && txnResp.Succeeded {
 			objectKeys = append(objectKeys, deletionRecord.ObjectKey)
 			continue
@@ -180,7 +182,7 @@ func (b *DeletionOpBuilder) AcquireDeletions(ctx context.Context, lockKey string
 
 		lockedByItselfCompareOp := []clientv3.Cmp{clientv3.Compare(clientv3.Value(objectLockPath), "=", lockKey)}
 
-		txnResp, err = b.store.ExecuteConditionalTransaction(ctx, lockedByItselfCompareOp, leaseOp, nil)
+		txnResp, err = b.clientWrapper.ExecuteConditionalTransaction(ctx, lockedByItselfCompareOp, leaseOp, nil)
 		if err == nil && txnResp.Succeeded {
 			objectKeys = append(objectKeys, deletionRecord.ObjectKey)
 		}
