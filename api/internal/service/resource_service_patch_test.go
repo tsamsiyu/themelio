@@ -9,12 +9,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"go.uber.org/zap"
-	"k8s.io/apiextensions-apiserver/pkg/apis/apiextensions"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime"
 
 	"github.com/tsamsiyu/themelio/api/internal/repository"
 	"github.com/tsamsiyu/themelio/api/internal/repository/types"
+	themeliotypes "github.com/tsamsiyu/themelio/sdk/pkg/types"
 )
 
 // mockSchemaService is a mock implementation of SchemaService for testing
@@ -22,18 +21,41 @@ type mockSchemaService struct {
 	mock.Mock
 }
 
-func (m *mockSchemaService) GetSchema(ctx context.Context, gvk types.GroupVersionKind) (*apiextensions.JSONSchemaProps, error) {
-	args := m.Called(ctx, gvk)
-	return args.Get(0).(*apiextensions.JSONSchemaProps), args.Error(1)
-}
-
-func (m *mockSchemaService) ValidateResource(ctx context.Context, obj runtime.Object) error {
-	args := m.Called(ctx, obj)
+// CRD management methods
+func (m *mockSchemaService) CreateCRD(ctx context.Context, crd *themeliotypes.CustomResourceDefinition) error {
+	args := m.Called(ctx, crd)
 	return args.Error(0)
 }
 
-func (m *mockSchemaService) StoreSchema(ctx context.Context, gvk types.GroupVersionKind, schema *apiextensions.JSONSchemaProps) error {
-	args := m.Called(ctx, gvk, schema)
+func (m *mockSchemaService) UpdateCRD(ctx context.Context, crd *themeliotypes.CustomResourceDefinition) error {
+	args := m.Called(ctx, crd)
+	return args.Error(0)
+}
+
+func (m *mockSchemaService) DeleteCRD(ctx context.Context, group, kind string) error {
+	args := m.Called(ctx, group, kind)
+	return args.Error(0)
+}
+
+func (m *mockSchemaService) GetCRD(ctx context.Context, group, kind string) (*themeliotypes.CustomResourceDefinition, error) {
+	args := m.Called(ctx, group, kind)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*themeliotypes.CustomResourceDefinition), args.Error(1)
+}
+
+func (m *mockSchemaService) ListCRDs(ctx context.Context) ([]*themeliotypes.CustomResourceDefinition, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*themeliotypes.CustomResourceDefinition), args.Error(1)
+}
+
+// Resource validation
+func (m *mockSchemaService) ValidateResource(ctx context.Context, obj *unstructured.Unstructured) error {
+	args := m.Called(ctx, obj)
 	return args.Error(0)
 }
 
