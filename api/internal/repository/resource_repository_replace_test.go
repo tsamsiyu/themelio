@@ -11,7 +11,6 @@ import (
 
 	"github.com/tsamsiyu/themelio/api/internal/lib"
 	"github.com/tsamsiyu/themelio/api/internal/repository"
-	"github.com/tsamsiyu/themelio/api/internal/repository/types"
 	"github.com/tsamsiyu/themelio/api/mocks"
 	sdkmeta "github.com/tsamsiyu/themelio/sdk/pkg/types/meta"
 )
@@ -50,7 +49,7 @@ func TestResourceRepository_Replace_NewResource(t *testing.T) {
 	}
 
 	// Given: A new resource that doesn't exist yet
-	mockStore.EXPECT().Get(ctx, key).Return(nil, types.NewNotFoundError("resource not found"))
+	mockStore.EXPECT().Get(ctx, key).Return(nil, repository.NewNotFoundError("resource not found"))
 	mockStore.EXPECT().BuildPutTxOp(resource).Return(clientv3.OpPut("/example.com/v1/TestResource/default/new-resource", "{}"), nil)
 	mockClient.EXPECT().ExecuteTransaction(ctx, mock.Anything).Return(nil)
 
@@ -108,7 +107,7 @@ func TestResourceRepository_Replace_NewResource_WithOwnerReferences(t *testing.T
 	}
 
 	// Given: A new resource with owner references that doesn't exist yet
-	mockStore.EXPECT().Get(ctx, key).Return(nil, types.NewNotFoundError("resource not found"))
+	mockStore.EXPECT().Get(ctx, key).Return(nil, repository.NewNotFoundError("resource not found"))
 	mockStore.EXPECT().BuildPutTxOp(resource).Return(clientv3.OpPut("/example.com/v1/TestResource/default/new-resource", "{}"), nil)
 	mockClient.EXPECT().ExecuteTransaction(ctx, mock.Anything).Return(nil)
 

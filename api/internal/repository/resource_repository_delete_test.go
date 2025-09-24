@@ -10,7 +10,6 @@ import (
 
 	"github.com/tsamsiyu/themelio/api/internal/lib"
 	"github.com/tsamsiyu/themelio/api/internal/repository"
-	"github.com/tsamsiyu/themelio/api/internal/repository/types"
 	"github.com/tsamsiyu/themelio/api/mocks"
 	sdkmeta "github.com/tsamsiyu/themelio/sdk/pkg/types/meta"
 )
@@ -200,7 +199,7 @@ func TestResourceRepository_Delete_ResourceNotFound(t *testing.T) {
 	}
 
 	// Given: A resource that does not exist
-	mockStore.EXPECT().Get(ctx, key).Return(nil, types.NewNotFoundError("resource not found"))
+	mockStore.EXPECT().Get(ctx, key).Return(nil, repository.NewNotFoundError("resource not found"))
 
 	// When: Attempting to delete the resource
 	err := repo.Delete(ctx, key)

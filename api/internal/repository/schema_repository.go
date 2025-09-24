@@ -10,7 +10,6 @@ import (
 	"go.uber.org/zap"
 
 	internalerrors "github.com/tsamsiyu/themelio/api/internal/errors"
-	"github.com/tsamsiyu/themelio/api/internal/repository/types"
 	sdkschema "github.com/tsamsiyu/themelio/sdk/pkg/types/schema"
 )
 
@@ -61,7 +60,7 @@ func (r *schemaRepository) GetSchema(ctx context.Context, group, kind string) (*
 	}
 
 	if len(resp.Kvs) == 0 {
-		return nil, types.NewNotFoundError(key)
+		return nil, NewNotFoundError(key)
 	}
 
 	var schema sdkschema.ObjectSchema

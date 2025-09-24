@@ -6,8 +6,6 @@ import (
 	"github.com/pkg/errors"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
-
-	"github.com/tsamsiyu/themelio/api/internal/repository/types"
 )
 
 // KeyValue represents a key-value pair from etcd
@@ -62,7 +60,7 @@ func (c *clientWrapper) Get(ctx context.Context, key string) ([]byte, error) {
 	}
 
 	if len(resp.Kvs) == 0 {
-		return nil, types.NewNotFoundError(key)
+		return nil, NewNotFoundError(key)
 	}
 
 	return resp.Kvs[0].Value, nil

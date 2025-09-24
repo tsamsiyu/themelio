@@ -9,7 +9,6 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/tsamsiyu/themelio/api/internal/lib"
-	"github.com/tsamsiyu/themelio/api/internal/repository/types"
 	sdkmeta "github.com/tsamsiyu/themelio/sdk/pkg/types/meta"
 )
 
@@ -23,8 +22,8 @@ type WatchHandler struct {
 	logger       *zap.Logger
 	config       WatchConfig
 	backoff      *lib.BackoffManager
-	eventChan    chan<- types.WatchEvent
-	clients      []chan<- types.WatchEvent
+	eventChan    chan<- WatchEvent
+	clients      []chan<- WatchEvent
 	clientsMutex sync.RWMutex
 	lastRevision int64
 	retryCount   int
@@ -46,19 +45,19 @@ func NewWatchHandler(
 	}
 }
 
-func (h *WatchHandler) Start(ctx context.Context, eventChan chan<- types.WatchEvent) {
+func (h *WatchHandler) Start(ctx context.Context, eventChan chan<- WatchEvent) {
 	h.eventChan = eventChan
 	h.AddClient(eventChan)
 	go h.watchLoop(ctx)
 }
 
-func (h *WatchHandler) AddClient(clientChan chan<- types.WatchEvent) {
+func (h *WatchHandler) AddClient(clientChan chan<- WatchEvent) {
 	h.clientsMutex.Lock()
 	defer h.clientsMutex.Unlock()
 	h.clients = append(h.clients, clientChan)
 }
 
-func (h *WatchHandler) RemoveClient(clientChan chan<- types.WatchEvent) {
+func (h *WatchHandler) RemoveClient(clientChan chan<- WatchEvent) {
 	h.clientsMutex.Lock()
 	defer h.clientsMutex.Unlock()
 	for i, client := range h.clients {
@@ -75,20 +74,20 @@ func (h *WatchHandler) getClientCount() int {
 	return len(h.clients)
 }
 
-func (h *WatchHandler) copyClients() []chan<- types.WatchEvent {
+func (h *WatchHandler) copyClients() []chan<- WatchEvent {
 	h.clientsMutex.RLock()
 	defer h.clientsMutex.RUnlock()
 
-	clients := make([]chan<- types.WatchEvent, len(h.clients))
+	clients := make([]chan<- WatchEvent, len(h.clients))
 	copy(clients, h.clients)
 	return clients
 }
 
-func (h *WatchHandler) broadcastEvent(ctx context.Context, event types.WatchEvent) {
+func (h *WatchHandler) broadcastEvent(ctx context.Context, event WatchEvent) {
 	clients := h.copyClients()
 
 	for _, client := range clients {
-		go func(client chan<- types.WatchEvent) {
+		go func(client chan<- WatchEvent) {
 			select {
 			case client <- event:
 			case <-ctx.Done():
@@ -109,7 +108,7 @@ func (h *WatchHandler) watchLoop(ctx context.Context) {
 		watchCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
 
-		watchChan := make(chan types.WatchEvent, 100)
+		watchChan := make(chan WatchEvent, 100)
 
 		// TODO: restart watcher with last revision if last error was not etcd's CompactedErr error
 		// TODO: if last error was CompactedErr or if start of watcher with a specified revision causes CompactedErr we have to call reconciler process
@@ -147,7 +146,7 @@ func (h *WatchHandler) watchLoop(ctx context.Context) {
 	}
 }
 
-func (h *WatchHandler) processWatchEvents(ctx context.Context, watchChan <-chan types.WatchEvent) error {
+func (h *WatchHandler) processWatchEvents(ctx context.Context, watchChan <-chan WatchEvent) error {
 	for {
 		select {
 		case <-ctx.Done():
@@ -157,7 +156,7 @@ func (h *WatchHandler) processWatchEvents(ctx context.Context, watchChan <-chan 
 				return errors.New("watch channel closed")
 			}
 
-			if event.Type == types.WatchEventTypeError {
+			if event.Type == WatchEventTypeError {
 				if errors.Is(event.Error, context.Canceled) {
 					return nil
 				}
@@ -179,8 +178,8 @@ func (h *WatchHandler) reconcile(ctx context.Context) error {
 	// TODO: handle the cache of resources revisions
 
 	for _, resource := range resources {
-		event := types.WatchEvent{
-			Type:      types.WatchEventTypeAdded,
+		event := WatchEvent{
+			Type:      WatchEventTypeAdded,
 			Object:    resource,
 			Timestamp: time.Now(),
 		}

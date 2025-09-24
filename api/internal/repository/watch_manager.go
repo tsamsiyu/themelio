@@ -7,7 +7,6 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/tsamsiyu/themelio/api/internal/lib"
-	"github.com/tsamsiyu/themelio/api/internal/repository/types"
 	sdkmeta "github.com/tsamsiyu/themelio/sdk/pkg/types/meta"
 )
 
@@ -30,8 +29,8 @@ func NewWatchManager(store ResourceStore, logger *zap.Logger, config WatchConfig
 	}
 }
 
-func (m *WatchManager) Watch(ctx context.Context, objType *sdkmeta.ObjectType, namespace string) <-chan types.WatchEvent {
-	clientChan := make(chan types.WatchEvent, 100)
+func (m *WatchManager) Watch(ctx context.Context, objType *sdkmeta.ObjectType, namespace string) <-chan WatchEvent {
+	clientChan := make(chan WatchEvent, 100)
 	keyStr := objectTypeToDbKey(objType)
 
 	m.handlersMu.Lock()
@@ -52,12 +51,12 @@ func (m *WatchManager) Watch(ctx context.Context, objType *sdkmeta.ObjectType, n
 }
 
 func (m *WatchManager) startHandler(ctx context.Context, handler *WatchHandler) {
-	eventChan := make(chan types.WatchEvent, 100)
+	eventChan := make(chan WatchEvent, 100)
 	handler.Start(ctx, eventChan)
 
 	go func() {
 		for event := range eventChan {
-			if event.Type == types.WatchEventTypeError {
+			if event.Type == WatchEventTypeError {
 				m.logger.Error("Handler error",
 					zap.String("key", objectTypeToDbKey(handler.objType)),
 					zap.Error(event.Error))
@@ -66,7 +65,7 @@ func (m *WatchManager) startHandler(ctx context.Context, handler *WatchHandler) 
 	}()
 }
 
-func (m *WatchManager) cleanupHandler(ctx context.Context, key string, handler *WatchHandler, clientChan chan types.WatchEvent) {
+func (m *WatchManager) cleanupHandler(ctx context.Context, key string, handler *WatchHandler, clientChan chan WatchEvent) {
 	<-ctx.Done()
 	handler.RemoveClient(clientChan)
 	close(clientChan)

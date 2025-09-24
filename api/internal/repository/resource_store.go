@@ -10,9 +10,25 @@ import (
 	"go.uber.org/zap"
 
 	internalerrors "github.com/tsamsiyu/themelio/api/internal/errors"
-	"github.com/tsamsiyu/themelio/api/internal/repository/types"
 	sdkmeta "github.com/tsamsiyu/themelio/sdk/pkg/types/meta"
 )
+
+type WatchEventType string
+
+const (
+	WatchEventTypeAdded    WatchEventType = "added"
+	WatchEventTypeModified WatchEventType = "modified"
+	WatchEventTypeDeleted  WatchEventType = "deleted"
+	WatchEventTypeError    WatchEventType = "error"
+)
+
+type WatchEvent struct {
+	Type      WatchEventType  `json:"type"`
+	Object    *sdkmeta.Object `json:"object"`
+	Timestamp time.Time       `json:"timestamp"`
+	Revision  int64           `json:"revision,omitempty"`
+	Error     error           `json:"error,omitempty"`
+}
 
 // ResourceStore provides resource-specific operations and watch functionality
 type ResourceStore interface {
@@ -26,7 +42,7 @@ type ResourceStore interface {
 	BuildPutTxOp(obj *sdkmeta.Object) (clientv3.Op, error)
 
 	// Watch operations
-	Watch(ctx context.Context, objType *sdkmeta.ObjectType, eventChan chan<- types.WatchEvent) error
+	Watch(ctx context.Context, objType *sdkmeta.ObjectType, eventChan chan<- WatchEvent) error
 }
 
 type resourceStore struct {
@@ -102,7 +118,7 @@ func (s *resourceStore) BuildPutTxOp(resource *sdkmeta.Object) (clientv3.Op, err
 	return clientv3.OpPut(key, data), nil
 }
 
-func (s *resourceStore) Watch(ctx context.Context, objType *sdkmeta.ObjectType, eventChan chan<- types.WatchEvent) error {
+func (s *resourceStore) Watch(ctx context.Context, objType *sdkmeta.ObjectType, eventChan chan<- WatchEvent) error {
 	keyStr := objectTypeToDbKey(objType)
 	go s.watchResources(ctx, keyStr, eventChan)
 	return nil
@@ -110,7 +126,7 @@ func (s *resourceStore) Watch(ctx context.Context, objType *sdkmeta.ObjectType, 
 
 // watchResources
 // if eventChan is full this method will block until the channel is ready to receive the event
-func (s *resourceStore) watchResources(ctx context.Context, prefix string, eventChan chan<- types.WatchEvent) {
+func (s *resourceStore) watchResources(ctx context.Context, prefix string, eventChan chan<- WatchEvent) {
 	defer close(eventChan)
 
 	watchCtx, cancel := context.WithCancel(ctx)
@@ -118,8 +134,8 @@ func (s *resourceStore) watchResources(ctx context.Context, prefix string, event
 
 	watchChan, err := s.clientWrapper.Watch(watchCtx, prefix)
 	if err != nil {
-		errorEvent := types.WatchEvent{
-			Type:      types.WatchEventTypeError,
+		errorEvent := WatchEvent{
+			Type:      WatchEventTypeError,
 			Error:     err,
 			Timestamp: time.Now(),
 		}
@@ -141,8 +157,8 @@ func (s *resourceStore) watchResources(ctx context.Context, prefix string, event
 			}
 
 			if watchResp.Err() != nil {
-				errorEvent := types.WatchEvent{
-					Type:      types.WatchEventTypeError,
+				errorEvent := WatchEvent{
+					Type:      WatchEventTypeError,
 					Error:     watchResp.Err(),
 					Timestamp: time.Now(),
 					Revision:  watchResp.CompactRevision,
@@ -182,8 +198,8 @@ func (s *resourceStore) watchResources(ctx context.Context, prefix string, event
 	}
 }
 
-func (s *resourceStore) convertEtcdEventToWatchEvent(ev *clientv3.Event, revision int64) (types.WatchEvent, error) {
-	event := types.WatchEvent{
+func (s *resourceStore) convertEtcdEventToWatchEvent(ev *clientv3.Event, revision int64) (WatchEvent, error) {
+	event := WatchEvent{
 		Timestamp: time.Now(),
 		Revision:  revision,
 	}
@@ -191,9 +207,9 @@ func (s *resourceStore) convertEtcdEventToWatchEvent(ev *clientv3.Event, revisio
 	switch ev.Type {
 	case clientv3.EventTypePut:
 		if ev.PrevKv == nil {
-			event.Type = types.WatchEventTypeAdded
+			event.Type = WatchEventTypeAdded
 		} else {
-			event.Type = types.WatchEventTypeModified
+			event.Type = WatchEventTypeModified
 		}
 
 		resource, err := s.unmarshalResource(ev.Kv.Value)
@@ -203,7 +219,7 @@ func (s *resourceStore) convertEtcdEventToWatchEvent(ev *clientv3.Event, revisio
 		event.Object = resource
 
 	case clientv3.EventTypeDelete:
-		event.Type = types.WatchEventTypeDeleted
+		event.Type = WatchEventTypeDeleted
 
 		if ev.PrevKv != nil {
 			resource, err := s.unmarshalResource(ev.PrevKv.Value)

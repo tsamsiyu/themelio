@@ -9,7 +9,6 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 
-	"github.com/tsamsiyu/themelio/api/internal/repository/types"
 	sdkmeta "github.com/tsamsiyu/themelio/sdk/pkg/types/meta"
 )
 
@@ -100,7 +99,7 @@ func (b *OwnerReferenceOpBuilder) QueryChildren(ctx context.Context, parentKey s
 	for _, childKey := range childKeys {
 		child, err := b.store.Get(ctx, childKey)
 		if err != nil {
-			if types.IsNotFoundError(err) {
+			if IsNotFoundError(err) {
 				b.logger.Warn("child resource not found by reversed reference",
 					zap.String("childKey", objectKeyToDbKey(childKey)),
 					zap.String("parentKey", objectKeyToDbKey(parentKey)))

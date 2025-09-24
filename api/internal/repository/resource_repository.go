@@ -9,7 +9,6 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/tsamsiyu/themelio/api/internal/lib"
-	"github.com/tsamsiyu/themelio/api/internal/repository/types"
 	sdkmeta "github.com/tsamsiyu/themelio/sdk/pkg/types/meta"
 )
 
@@ -18,7 +17,7 @@ type ResourceRepository interface {
 	Get(ctx context.Context, key sdkmeta.ObjectKey) (*sdkmeta.Object, error)
 	List(ctx context.Context, objType *sdkmeta.ObjectType, limit int) ([]*sdkmeta.Object, error)
 	Delete(ctx context.Context, key sdkmeta.ObjectKey) error
-	Watch(ctx context.Context, objType *sdkmeta.ObjectType, eventChan chan<- types.WatchEvent) error
+	Watch(ctx context.Context, objType *sdkmeta.ObjectType, eventChan chan<- WatchEvent) error
 	MarkDeleted(ctx context.Context, key sdkmeta.ObjectKey) error
 	ListDeletions(ctx context.Context, lockKey string, lockExp time.Duration, batchLimit int) (*DeletionBatch, error)
 }
@@ -48,7 +47,7 @@ func NewResourceRepository(logger *zap.Logger, store ResourceStore, clientWrappe
 
 func (r *resourceRepository) Replace(ctx context.Context, obj *sdkmeta.Object) error {
 	oldResource, err := r.store.Get(ctx, *obj.ObjectKey)
-	if err != nil && !types.IsNotFoundError(err) {
+	if err != nil && !IsNotFoundError(err) {
 		return err
 	}
 
@@ -119,7 +118,7 @@ func (r *resourceRepository) Delete(ctx context.Context, key sdkmeta.ObjectKey) 
 	return r.clientWrapper.ExecuteTransaction(ctx, ops)
 }
 
-func (r *resourceRepository) Watch(ctx context.Context, objType *sdkmeta.ObjectType, eventChan chan<- types.WatchEvent) error {
+func (r *resourceRepository) Watch(ctx context.Context, objType *sdkmeta.ObjectType, eventChan chan<- WatchEvent) error {
 	watchChan := r.watchManager.Watch(ctx, objType, "")
 	go func() {
 		defer close(eventChan)
