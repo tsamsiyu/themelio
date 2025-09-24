@@ -50,12 +50,17 @@ func NewResourceRepository(logger *zap.Logger, store ResourceStore, clientWrappe
 
 func (r *resourceRepository) Replace(ctx context.Context, key types.ObjectKey, resource *unstructured.Unstructured) error {
 	oldResource, err := r.store.Get(ctx, key)
-	if err != nil {
+	if err != nil && !types.IsNotFoundError(err) {
 		return err
 	}
 
+	var oldOwnerRefs []metav1.OwnerReference
+	if oldResource != nil {
+		oldOwnerRefs = oldResource.GetOwnerReferences()
+	}
+
 	diff := types.CalculateOwnerReferenceDiff(
-		oldResource.GetOwnerReferences(),
+		oldOwnerRefs,
 		resource.GetOwnerReferences(),
 	)
 
@@ -88,7 +93,7 @@ func (r *resourceRepository) List(ctx context.Context, key types.ResourceKey, li
 
 // TODO: allow deleting only if lock is still valid
 func (r *resourceRepository) Delete(ctx context.Context, key types.ObjectKey) error {
-	resource, err := r.Get(ctx, key)
+	resource, err := r.store.Get(ctx, key)
 	if err != nil {
 		return err
 	}

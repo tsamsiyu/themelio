@@ -70,3 +70,11 @@ Currently, the following resources are planned:
 ## License
 
 [License information to be added]
+
+
+TODO:
+- mocks
+- sdk types
+- watcher reconciliation
+- optimistic locking
+- filtering by labels
