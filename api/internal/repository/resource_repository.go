@@ -20,7 +20,7 @@ type ResourceRepository interface {
 	Delete(ctx context.Context, key sdkmeta.ObjectKey) error
 	Watch(ctx context.Context, objType *sdkmeta.ObjectType, eventChan chan<- types.WatchEvent) error
 	MarkDeleted(ctx context.Context, key sdkmeta.ObjectKey) error
-	ListDeletions(ctx context.Context, lockKey string, lockExp time.Duration, batchLimit int) (*types.DeletionBatch, error)
+	ListDeletions(ctx context.Context, lockKey string, lockExp time.Duration, batchLimit int) (*DeletionBatch, error)
 }
 
 type resourceRepository struct {
@@ -62,23 +62,24 @@ func (r *resourceRepository) Replace(ctx context.Context, obj *sdkmeta.Object) e
 		}
 	}
 
-	diff := types.CalculateOwnerReferenceDiffFromObjects(oldResource, obj)
-
-	var ops []clientv3.Op
-
-	setOp, err := r.store.BuildPutTxOp(obj)
+	putOp, err := r.store.BuildPutTxOp(obj)
 	if err != nil {
 		return err
 	}
-	ops = append(ops, setOp)
 
-	if len(diff.Deleted) > 0 || len(diff.Created) > 0 {
-		refOps, err := r.ownerRefOpBuilder.BuildDiffOperations(ctx, diff, *obj.ObjectKey)
-		if err != nil {
-			return errors.Wrap(err, "failed to create reference transaction operations")
-		}
-		ops = append(ops, refOps...)
+	var oldOwnerRefs []sdkmeta.OwnerReference
+	if oldResource != nil {
+		oldOwnerRefs = oldResource.ObjectMeta.OwnerReferences
 	}
+
+	ownerRefOps := r.ownerRefOpBuilder.BuildIndexesUpdateOps(
+		*obj.ObjectKey,
+		oldOwnerRefs,
+		obj.ObjectMeta.OwnerReferences,
+	)
+
+	ops := []clientv3.Op{putOp}
+	ops = append(ops, ownerRefOps...)
 
 	return r.clientWrapper.ExecuteTransaction(ctx, ops)
 }
@@ -98,27 +99,21 @@ func (r *resourceRepository) Delete(ctx context.Context, key sdkmeta.ObjectKey) 
 		return err
 	}
 
-	refOps, err := r.ownerRefOpBuilder.BuildDropOperations(ctx, obj.ObjectMeta.OwnerReferences, key)
+	ownerReferenceIndexesCleanupOps := r.ownerRefOpBuilder.BuildIndexesCleanupOps(key, obj.ObjectMeta.OwnerReferences)
+
+	childResources, err := r.ownerRefOpBuilder.QueryChildren(ctx, key)
 	if err != nil {
-		return errors.Wrap(err, "failed to create owner reference deletion operations")
+		return errors.Wrap(err, "failed to query children resources")
 	}
 
-	childResources, err := r.ownerRefOpBuilder.QueryChildResources(ctx, key)
-	if err != nil {
-		return errors.Wrap(err, "failed to query child resources")
-	}
-
-	childrenCleanupOps, err := r.deletionOpBuilder.BuildChildrenCleanupOperations(
-		obj,
-		childResources,
-	)
+	childrenCleanupOps, err := r.deletionOpBuilder.BuildChildrenCleanupOps(obj, childResources)
 	if err != nil {
 		return errors.Wrap(err, "failed to create children cleanup operations")
 	}
 
 	var ops []clientv3.Op
 	ops = append(ops, clientv3.OpDelete(objectKeyToDbKey(key)))
-	ops = append(ops, refOps...)
+	ops = append(ops, ownerReferenceIndexesCleanupOps...)
 	ops = append(ops, childrenCleanupOps...)
 
 	return r.clientWrapper.ExecuteTransaction(ctx, ops)
@@ -167,6 +162,6 @@ func (r *resourceRepository) MarkDeleted(ctx context.Context, key sdkmeta.Object
 }
 
 // ListDeletions returns a batch of resources marked for deletion using distributed locking
-func (r *resourceRepository) ListDeletions(ctx context.Context, lockKey string, lockExp time.Duration, batchLimit int) (*types.DeletionBatch, error) {
+func (r *resourceRepository) ListDeletions(ctx context.Context, lockKey string, lockExp time.Duration, batchLimit int) (*DeletionBatch, error) {
 	return r.deletionOpBuilder.AcquireDeletions(ctx, lockKey, lockExp, batchLimit)
 }

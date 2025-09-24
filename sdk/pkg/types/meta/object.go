@@ -35,6 +35,18 @@ type OwnerReference struct {
 	BlockOwnerDeletion bool        `json:"blockOwnerDeletion"`
 }
 
+func (or OwnerReference) ToObjectKey() ObjectKey {
+	return ObjectKey{
+		ObjectType: ObjectType{
+			Group:     or.TypeMeta.Group,
+			Version:   or.TypeMeta.Version,
+			Kind:      or.TypeMeta.Kind,
+			Namespace: or.TypeMeta.Namespace,
+		},
+		Name: or.Name,
+	}
+}
+
 type Object struct {
 	ObjectKey  *ObjectKey  `json:"key" validate:"required"`
 	ObjectMeta *ObjectMeta `json:"meta" validate:"required"`

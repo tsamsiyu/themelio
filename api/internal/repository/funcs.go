@@ -29,14 +29,6 @@ func schemaDbKey(group, kind string) string {
 	return fmt.Sprintf("/schema/%s/%s", group, kind)
 }
 
-func deletionDbKey(key sdkmeta.ObjectKey) string {
-	return fmt.Sprintf("/deletion%s", objectKeyToDbKey(key))
-}
-
-func deletionLockDbKey(lockKey string) string {
-	return fmt.Sprintf("/deletion-lock/%s", lockKey)
-}
-
 func parseObjectKey(key string) (sdkmeta.ObjectKey, error) {
 	key = strings.TrimPrefix(key, "/")
 	parts := strings.Split(key, "/")
@@ -63,16 +55,4 @@ func parseObjectKey(key string) (sdkmeta.ObjectKey, error) {
 		}, nil
 	}
 	return sdkmeta.ObjectKey{}, fmt.Errorf("invalid object key format: expected 4 or 5 parts, got %d", len(parts))
-}
-
-func OwnerRefToObjectKey(ownerRef sdkmeta.OwnerReference, namespace string) sdkmeta.ObjectKey {
-	return sdkmeta.ObjectKey{
-		ObjectType: sdkmeta.ObjectType{
-			Group:     ownerRef.TypeMeta.Group,
-			Version:   ownerRef.TypeMeta.Version,
-			Kind:      ownerRef.TypeMeta.Kind,
-			Namespace: namespace,
-		},
-		Name: ownerRef.Name,
-	}
 }

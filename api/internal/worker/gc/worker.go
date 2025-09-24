@@ -199,7 +199,7 @@ func (w *Worker) shouldSkipDeletion(ctx context.Context, resource *sdkmeta.Objec
 	ownerRefs := resource.ObjectMeta.OwnerReferences
 	for _, ownerRef := range ownerRefs {
 		if ownerRef.BlockOwnerDeletion {
-			parentKey := repository.OwnerRefToObjectKey(ownerRef, resource.ObjectKey.Namespace)
+			parentKey := ownerRef.ToObjectKey()
 			parent, err := w.repo.Get(ctx, parentKey)
 			if err != nil {
 				return false, err

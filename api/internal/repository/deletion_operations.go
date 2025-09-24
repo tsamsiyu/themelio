@@ -2,18 +2,21 @@ package repository
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/pkg/errors"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 
-	internalerrors "github.com/tsamsiyu/themelio/api/internal/errors"
-	"github.com/tsamsiyu/themelio/api/internal/repository/types"
 	sdkmeta "github.com/tsamsiyu/themelio/sdk/pkg/types/meta"
 )
+
+type DeletionBatch struct {
+	ObjectKeys []sdkmeta.ObjectKey
+	LeaseID    clientv3.LeaseID
+}
 
 type DeletionOpBuilder struct {
 	store         ResourceStore
@@ -31,19 +34,11 @@ func NewDeletionOpBuilder(store ResourceStore, clientWrapper ClientWrapper, logg
 
 func (b *DeletionOpBuilder) BuildMarkDeletionOperation(key sdkmeta.ObjectKey) (*clientv3.Op, error) {
 	deletionKey := deletionDbKey(key)
-	deletionRecord := types.NewDeletionRecord(key)
-	deletionData, err := json.Marshal(deletionRecord)
-	if err != nil {
-		return nil, internalerrors.NewMarshalingError("failed to marshal deletion record")
-	}
-
-	op := clientv3.OpPut(deletionKey, string(deletionData))
-
+	op := clientv3.OpPut(deletionKey, time.Now().Format(time.RFC3339))
 	return &op, nil
 }
 
-// BuildChildrenCleanupOperations builds all operations needed to clean up children of a resource
-func (b *DeletionOpBuilder) BuildChildrenCleanupOperations(
+func (b *DeletionOpBuilder) BuildChildrenCleanupOps(
 	obj *sdkmeta.Object,
 	children []*sdkmeta.Object,
 ) ([]clientv3.Op, error) {
@@ -110,68 +105,72 @@ func (b *DeletionOpBuilder) buildChildrenMarkDeletionOps(
 	return ops, nil
 }
 
-func (b *DeletionOpBuilder) ListDeletions(ctx context.Context, batchLimit int) ([]types.DeletionRecord, error) {
+func (b *DeletionOpBuilder) ListDeletions(ctx context.Context, batchLimit int) (map[sdkmeta.ObjectKey]time.Time, error) {
 	prefix := "/deletion/"
 	kvs, err := b.clientWrapper.List(ctx, prefix, batchLimit)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to list deletion records from etcd")
 	}
 
-	var deletionRecords []types.DeletionRecord
+	records := make(map[sdkmeta.ObjectKey]time.Time)
 	for _, kv := range kvs {
-		var deletionRecord types.DeletionRecord
-		if err := json.Unmarshal(kv.Value, &deletionRecord); err != nil {
-			continue
+		key, err := parseDeletionKey(kv.Key)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to parse deletion key")
 		}
-		deletionRecords = append(deletionRecords, deletionRecord)
+		value, err := time.Parse(time.RFC3339, string(kv.Value))
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to parse deletion record")
+		}
+		records[key] = value
 	}
 
-	return deletionRecords, nil
+	return records, nil
 }
 
-func (b *DeletionOpBuilder) AcquireDeletions(ctx context.Context, lockKey string, lockExp time.Duration, batchLimit int) (*types.DeletionBatch, error) {
+func (b *DeletionOpBuilder) AcquireDeletions(ctx context.Context, lockKey string, lockExp time.Duration, batchLimit int) (*DeletionBatch, error) {
 	leaseResp, err := b.clientWrapper.GrantLease(ctx, int64(lockExp.Seconds()))
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to grant lease for deletion lock")
 	}
 
-	deletionRecords, err := b.ListDeletions(ctx, batchLimit)
+	deletions, err := b.ListDeletions(ctx, batchLimit)
 	if err != nil {
 		b.clientWrapper.RevokeLease(ctx, leaseResp.ID)
 		return nil, err
 	}
 
-	if len(deletionRecords) == 0 {
+	if len(deletions) == 0 {
 		b.clientWrapper.RevokeLease(ctx, leaseResp.ID)
-		return &types.DeletionBatch{ObjectKeys: []sdkmeta.ObjectKey{}, LeaseID: leaseResp.ID}, nil
+		return &DeletionBatch{ObjectKeys: []sdkmeta.ObjectKey{}, LeaseID: leaseResp.ID}, nil
 	}
 
 	var objectKeys []sdkmeta.ObjectKey
 
-	for _, deletionRecord := range deletionRecords {
+	for key := range deletions {
 		var txnResp *clientv3.TxnResponse
 		var err error
 
-		objectLockPath := fmt.Sprintf("/locks/deletion/%s", objectKeyToDbKey(deletionRecord.ObjectKey))
+		lockEtcdKey := deletionLockDbKey(key)
 
-		noLockCompareOp := []clientv3.Cmp{clientv3.Compare(clientv3.Version(objectLockPath), "=", 0)}
-		leaseOp := []clientv3.Op{clientv3.OpPut(objectLockPath, lockKey, clientv3.WithLease(leaseResp.ID))}
+		noLockCompareOp := []clientv3.Cmp{clientv3.Compare(clientv3.Version(lockEtcdKey), "=", 0)}
+		leaseOp := []clientv3.Op{clientv3.OpPut(lockEtcdKey, lockKey, clientv3.WithLease(leaseResp.ID))}
 
 		txnResp, err = b.clientWrapper.ExecuteConditionalTransaction(ctx, noLockCompareOp, leaseOp, nil)
 		if err == nil && txnResp.Succeeded {
-			objectKeys = append(objectKeys, deletionRecord.ObjectKey)
+			objectKeys = append(objectKeys, key)
 			continue
 		}
 
-		lockedByItselfCompareOp := []clientv3.Cmp{clientv3.Compare(clientv3.Value(objectLockPath), "=", lockKey)}
+		lockedByItselfCompareOp := []clientv3.Cmp{clientv3.Compare(clientv3.Value(lockEtcdKey), "=", lockKey)}
 
 		txnResp, err = b.clientWrapper.ExecuteConditionalTransaction(ctx, lockedByItselfCompareOp, leaseOp, nil)
 		if err == nil && txnResp.Succeeded {
-			objectKeys = append(objectKeys, deletionRecord.ObjectKey)
+			objectKeys = append(objectKeys, key)
 		}
 	}
 
-	return &types.DeletionBatch{ObjectKeys: objectKeys, LeaseID: leaseResp.ID}, nil
+	return &DeletionBatch{ObjectKeys: objectKeys, LeaseID: leaseResp.ID}, nil
 }
 
 func removeOwnerReference(ownerRefs []sdkmeta.OwnerReference, exceptID string) []sdkmeta.OwnerReference {
@@ -197,4 +196,17 @@ func hasOtherBlockingReference(childOwnerRefs []sdkmeta.OwnerReference, exceptID
 	}
 
 	return false
+}
+
+func deletionDbKey(key sdkmeta.ObjectKey) string {
+	return fmt.Sprintf("/deletion%s", objectKeyToDbKey(key))
+}
+
+func deletionLockDbKey(key sdkmeta.ObjectKey) string {
+	return fmt.Sprintf("/deletion-lock/%s", objectKeyToDbKey(key))
+}
+
+func parseDeletionKey(key string) (sdkmeta.ObjectKey, error) {
+	key = strings.TrimPrefix(key, "/deletion")
+	return parseObjectKey(key)
 }

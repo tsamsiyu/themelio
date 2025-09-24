@@ -49,25 +49,16 @@ func TestResourceRepository_Delete_ResourceWithoutOwnerReferences(t *testing.T) 
 		},
 	}
 
-	// Mock expectations for resource without owner references
-	// 1. Get the resource to delete
+	// Given: A resource without owner references
 	mockStore.EXPECT().Get(ctx, key).Return(resource, nil)
-
-	// 2. BuildDropOperations will be called with empty owner references
-	// Since there are no owner references, BuildDropOperations will return empty operations
-	// 3. QueryChildResources will be called to find child resources
-	// QueryChildResources calls GetReversedOwnerReferences which calls client.Get
-	// Since there are no owner references, it will return empty data
-	refKey := "/ref/example.com/v1/TestResource/default/test-resource"
-	mockClient.EXPECT().Get(ctx, refKey).Return([]byte(""), nil)
-
-	// 4. BuildChildrenCleanupOperations will be called with empty child resources
-	// This will return empty operations
-	// 5. ExecuteTransaction will be called with the delete operation
+	indexPrefix := "/index/owner-reference//example.com/v1/TestResource/default/test-resource"
+	mockClient.EXPECT().List(ctx, indexPrefix, -1).Return([]repository.KeyValue{}, nil)
 	mockClient.EXPECT().ExecuteTransaction(ctx, mock.Anything).Return(nil)
 
-	// Test
+	// When: Deleting the resource
 	err := repo.Delete(ctx, key)
+
+	// Then: The deletion should succeed
 	assert.NoError(t, err)
 }
 
@@ -128,14 +119,16 @@ func TestResourceRepository_Delete_ResourceWithOwnerReferences(t *testing.T) {
 		},
 	}
 
-	// Mock expectations for resource with owner references
+	// Given: A resource with owner references
 	mockStore.EXPECT().Get(ctx, key).Return(resource, nil)
-	// Mock owner reference cleanup operations
-	mockClient.EXPECT().Get(ctx, mock.Anything).Return([]byte("{}"), nil).Maybe()
+	indexPrefix := "/index/owner-reference//example.com/v1/TestResource/default/test-resource"
+	mockClient.EXPECT().List(ctx, indexPrefix, -1).Return([]repository.KeyValue{}, nil)
 	mockClient.EXPECT().ExecuteTransaction(ctx, mock.Anything).Return(nil)
 
-	// Test
+	// When: Deleting the resource
 	err := repo.Delete(ctx, key)
+
+	// Then: The deletion should succeed
 	assert.NoError(t, err)
 }
 
@@ -173,14 +166,16 @@ func TestResourceRepository_Delete_ResourceWithChildResources(t *testing.T) {
 		},
 	}
 
-	// Mock expectations for resource that might have child resources
+	// Given: A resource that might have child resources
 	mockStore.EXPECT().Get(ctx, key).Return(resource, nil)
-	// Mock child resource queries and cleanup operations
-	mockClient.EXPECT().Get(ctx, mock.Anything).Return([]byte("{}"), nil).Maybe()
+	indexPrefix := "/index/owner-reference//example.com/v1/TestResource/default/parent-resource"
+	mockClient.EXPECT().List(ctx, indexPrefix, -1).Return([]repository.KeyValue{}, nil)
 	mockClient.EXPECT().ExecuteTransaction(ctx, mock.Anything).Return(nil)
 
-	// Test
+	// When: Deleting the resource
 	err := repo.Delete(ctx, key)
+
+	// Then: The deletion should succeed
 	assert.NoError(t, err)
 }
 
@@ -204,11 +199,13 @@ func TestResourceRepository_Delete_ResourceNotFound(t *testing.T) {
 		Name: "nonexistent-resource",
 	}
 
-	// Mock expectations - resource not found
+	// Given: A resource that does not exist
 	mockStore.EXPECT().Get(ctx, key).Return(nil, types.NewNotFoundError("resource not found"))
 
-	// Test
+	// When: Attempting to delete the resource
 	err := repo.Delete(ctx, key)
+
+	// Then: An error should be returned
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "resource not found")
 }
@@ -259,12 +256,15 @@ func TestResourceRepository_Delete_ErrorDuringOwnerReferenceCleanup(t *testing.T
 		},
 	}
 
-	// Mock expectations - simulate error during owner reference cleanup
+	// Given: A resource with owner references and a failing child query
 	mockStore.EXPECT().Get(ctx, key).Return(resource, nil)
-	mockClient.EXPECT().Get(ctx, mock.Anything).Return(nil, assert.AnError)
+	indexPrefix := "/index/owner-reference//example.com/v1/TestResource/default/test-resource"
+	mockClient.EXPECT().List(ctx, indexPrefix, -1).Return(nil, assert.AnError)
 
-	// Test
+	// When: Attempting to delete the resource
 	err := repo.Delete(ctx, key)
+
+	// Then: An error should be returned
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to create owner reference deletion operations")
+	assert.Contains(t, err.Error(), "failed to query children resources")
 }

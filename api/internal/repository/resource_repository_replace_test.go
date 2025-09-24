@@ -49,18 +49,15 @@ func TestResourceRepository_Replace_NewResource(t *testing.T) {
 		},
 	}
 
-	// Mock expectations for new resource creation
-	// 1. Get existing resource - should return not found
+	// Given: A new resource that doesn't exist yet
 	mockStore.EXPECT().Get(ctx, key).Return(nil, types.NewNotFoundError("resource not found"))
-
-	// 2. Build put operation for the new resource
 	mockStore.EXPECT().BuildPutTxOp(resource).Return(clientv3.OpPut("/example.com/v1/TestResource/default/new-resource", "{}"), nil)
-
-	// 3. Execute transaction - since no existing resource, no owner reference operations needed
 	mockClient.EXPECT().ExecuteTransaction(ctx, mock.Anything).Return(nil)
 
-	// Test - should successfully create new resource
+	// When: Creating the new resource
 	err := repo.Replace(ctx, resource)
+
+	// Then: The creation should succeed
 	assert.NoError(t, err)
 }
 
@@ -110,24 +107,15 @@ func TestResourceRepository_Replace_NewResource_WithOwnerReferences(t *testing.T
 		},
 	}
 
-	// Mock expectations for new resource creation with owner references
-	// 1. Get existing resource - should return not found
+	// Given: A new resource with owner references that doesn't exist yet
 	mockStore.EXPECT().Get(ctx, key).Return(nil, types.NewNotFoundError("resource not found"))
-
-	// 2. Build put operation for the new resource
 	mockStore.EXPECT().BuildPutTxOp(resource).Return(clientv3.OpPut("/example.com/v1/TestResource/default/new-resource", "{}"), nil)
-
-	// 3. BuildDiffOperations will be called to handle owner reference creation
-	// Since this is a new resource, it will create owner references
-	// Mock the GetReversedOwnerReferences call that happens during BuildAddOperations
-	refKey := "/ref/apps/v1/Deployment/default/parent-deployment"
-	mockClient.EXPECT().Get(ctx, refKey).Return([]byte(""), nil)
-
-	// 4. Execute transaction with owner reference operations
 	mockClient.EXPECT().ExecuteTransaction(ctx, mock.Anything).Return(nil)
 
-	// Test - should successfully create new resource with owner references
+	// When: Creating the new resource with owner references
 	err := repo.Replace(ctx, resource)
+
+	// Then: The creation should succeed
 	assert.NoError(t, err)
 }
 
@@ -207,16 +195,15 @@ func TestResourceRepository_Replace_UpdateExistingResource(t *testing.T) {
 		},
 	}
 
-	// Mock expectations for updating existing resource with owner reference changes
+	// Given: An existing resource with different owner references
 	mockStore.EXPECT().Get(ctx, key).Return(existingResource, nil)
 	mockStore.EXPECT().BuildPutTxOp(newResource).Return(clientv3.OpPut("/example.com/v1/TestResource/default/test-resource", "{}"), nil)
-
-	// Mock owner reference operations - these are complex internal calls
-	mockClient.EXPECT().Get(ctx, mock.Anything).Return([]byte("{}"), nil).Maybe()
 	mockClient.EXPECT().ExecuteTransaction(ctx, mock.Anything).Return(nil)
 
-	// Test
+	// When: Updating the resource with new owner references
 	err := repo.Replace(ctx, newResource)
+
+	// Then: The update should succeed
 	assert.NoError(t, err)
 }
 
@@ -296,12 +283,14 @@ func TestResourceRepository_Replace_NoOwnerReferenceChanges(t *testing.T) {
 		},
 	}
 
-	// Mock expectations - no owner reference operations needed
+	// Given: An existing resource with unchanged owner references
 	mockStore.EXPECT().Get(ctx, key).Return(existingResource, nil)
 	mockStore.EXPECT().BuildPutTxOp(newResource).Return(clientv3.OpPut("/example.com/v1/TestResource/default/test-resource", "{}"), nil)
 	mockClient.EXPECT().ExecuteTransaction(ctx, mock.Anything).Return(nil)
 
-	// Test
+	// When: Updating the resource without changing owner references
 	err := repo.Replace(ctx, newResource)
+
+	// Then: The update should succeed
 	assert.NoError(t, err)
 }
