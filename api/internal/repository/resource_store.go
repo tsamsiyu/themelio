@@ -8,25 +8,25 @@ import (
 	"github.com/pkg/errors"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	internalerrors "github.com/tsamsiyu/themelio/api/internal/errors"
 	"github.com/tsamsiyu/themelio/api/internal/repository/types"
+	sdkmeta "github.com/tsamsiyu/themelio/sdk/pkg/types/meta"
 )
 
 // ResourceStore provides resource-specific operations and watch functionality
 type ResourceStore interface {
 	// Basic CRUD operations with automatic marshaling
-	Put(ctx context.Context, key types.ObjectKey, resource *unstructured.Unstructured) error
-	Get(ctx context.Context, key types.ObjectKey) (*unstructured.Unstructured, error)
-	Delete(ctx context.Context, key types.ObjectKey) error
-	List(ctx context.Context, key types.ResourceKey, limit int) ([]*unstructured.Unstructured, error)
+	Put(ctx context.Context, obj *sdkmeta.Object) error
+	Get(ctx context.Context, key sdkmeta.ObjectKey) (*sdkmeta.Object, error)
+	Delete(ctx context.Context, key sdkmeta.ObjectKey) error
+	List(ctx context.Context, objType *sdkmeta.ObjectType, limit int) ([]*sdkmeta.Object, error)
 
 	// Transaction operation builders
-	BuildPutTxOp(key types.ObjectKey, resource *unstructured.Unstructured) (clientv3.Op, error)
+	BuildPutTxOp(obj *sdkmeta.Object) (clientv3.Op, error)
 
 	// Watch operations
-	Watch(ctx context.Context, key types.ResourceKey, eventChan chan<- types.WatchEvent) error
+	Watch(ctx context.Context, objType *sdkmeta.ObjectType, eventChan chan<- types.WatchEvent) error
 }
 
 type resourceStore struct {
@@ -42,33 +42,38 @@ func NewResourceStore(logger *zap.Logger, clientWrapper ClientWrapper) ResourceS
 }
 
 // ResourceStore implementation
-func (s *resourceStore) Put(ctx context.Context, key types.ObjectKey, resource *unstructured.Unstructured) error {
-	data, err := s.MarshalResource(resource)
+func (s *resourceStore) Put(ctx context.Context, obj *sdkmeta.Object) error {
+	data, err := s.MarshalResource(obj)
 	if err != nil {
 		return err
 	}
-	return s.clientWrapper.Put(ctx, key.String(), data)
+
+	key := objectKeyToDbKey(*obj.ObjectKey)
+	return s.clientWrapper.Put(ctx, key, data)
 }
 
-func (s *resourceStore) Get(ctx context.Context, key types.ObjectKey) (*unstructured.Unstructured, error) {
-	data, err := s.clientWrapper.Get(ctx, key.String())
+func (s *resourceStore) Get(ctx context.Context, key sdkmeta.ObjectKey) (*sdkmeta.Object, error) {
+	keyStr := objectKeyToDbKey(key)
+	data, err := s.clientWrapper.Get(ctx, keyStr)
 	if err != nil {
 		return nil, err
 	}
 	return s.unmarshalResource(data)
 }
 
-func (s *resourceStore) Delete(ctx context.Context, key types.ObjectKey) error {
-	return s.clientWrapper.Delete(ctx, key.String())
+func (s *resourceStore) Delete(ctx context.Context, key sdkmeta.ObjectKey) error {
+	keyStr := objectKeyToDbKey(key)
+	return s.clientWrapper.Delete(ctx, keyStr)
 }
 
-func (s *resourceStore) List(ctx context.Context, key types.ResourceKey, limit int) ([]*unstructured.Unstructured, error) {
-	kvs, err := s.clientWrapper.List(ctx, key.String(), limit)
+func (s *resourceStore) List(ctx context.Context, objType *sdkmeta.ObjectType, limit int) ([]*sdkmeta.Object, error) {
+	keyStr := objectTypeToDbKey(objType)
+	kvs, err := s.clientWrapper.List(ctx, keyStr, limit)
 	if err != nil {
 		return nil, err
 	}
 
-	var resources []*unstructured.Unstructured
+	var resources []*sdkmeta.Object
 	for _, kv := range kvs {
 		resource, err := s.unmarshalResource(kv.Value)
 		if err != nil {
@@ -80,7 +85,7 @@ func (s *resourceStore) List(ctx context.Context, key types.ResourceKey, limit i
 	return resources, nil
 }
 
-func (s *resourceStore) MarshalResource(resource *unstructured.Unstructured) (string, error) {
+func (s *resourceStore) MarshalResource(resource *sdkmeta.Object) (string, error) {
 	data, err := json.Marshal(resource)
 	if err != nil {
 		return "", internalerrors.NewMarshalingError("Failed to marshal resource")
@@ -88,16 +93,18 @@ func (s *resourceStore) MarshalResource(resource *unstructured.Unstructured) (st
 	return string(data), nil
 }
 
-func (s *resourceStore) BuildPutTxOp(key types.ObjectKey, resource *unstructured.Unstructured) (clientv3.Op, error) {
+func (s *resourceStore) BuildPutTxOp(resource *sdkmeta.Object) (clientv3.Op, error) {
 	data, err := s.MarshalResource(resource)
 	if err != nil {
 		return clientv3.Op{}, err
 	}
-	return clientv3.OpPut(key.String(), data), nil
+	key := objectKeyToDbKey(*resource.ObjectKey)
+	return clientv3.OpPut(key, data), nil
 }
 
-func (s *resourceStore) Watch(ctx context.Context, key types.ResourceKey, eventChan chan<- types.WatchEvent) error {
-	go s.watchResources(ctx, key.ToKey(), eventChan)
+func (s *resourceStore) Watch(ctx context.Context, objType *sdkmeta.ObjectType, eventChan chan<- types.WatchEvent) error {
+	keyStr := objectTypeToDbKey(objType)
+	go s.watchResources(ctx, keyStr, eventChan)
 	return nil
 }
 
@@ -205,17 +212,20 @@ func (s *resourceStore) convertEtcdEventToWatchEvent(ev *clientv3.Event, revisio
 			}
 			event.Object = resource
 		} else {
-			objectKey, err := types.ParseObjectKey(string(ev.Kv.Key))
+			objectKey, err := parseObjectKey(string(ev.Kv.Key))
 			if err != nil {
 				return event, errors.Wrap(err, "failed to parse etcd key")
 			}
 
-			event.Object = &unstructured.Unstructured{
-				Object: map[string]interface{}{
-					"metadata": map[string]interface{}{
-						"name":      objectKey.Name,
-						"namespace": objectKey.Namespace,
+			event.Object = &sdkmeta.Object{
+				ObjectKey: &sdkmeta.ObjectKey{
+					ObjectType: sdkmeta.ObjectType{
+						Group:     objectKey.Group,
+						Version:   objectKey.Version,
+						Kind:      objectKey.Kind,
+						Namespace: objectKey.Namespace,
 					},
+					Name: objectKey.Name,
 				},
 			}
 		}
@@ -227,8 +237,8 @@ func (s *resourceStore) convertEtcdEventToWatchEvent(ev *clientv3.Event, revisio
 	return event, nil
 }
 
-func (s *resourceStore) unmarshalResource(data []byte) (*unstructured.Unstructured, error) {
-	var obj unstructured.Unstructured
+func (s *resourceStore) unmarshalResource(data []byte) (*sdkmeta.Object, error) {
+	var obj sdkmeta.Object
 	if err := json.Unmarshal(data, &obj); err != nil {
 		return nil, internalerrors.NewMarshalingError("Failed to unmarshal resource")
 	}

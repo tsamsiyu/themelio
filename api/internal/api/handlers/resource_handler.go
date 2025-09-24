@@ -9,7 +9,6 @@ import (
 
 	"github.com/tsamsiyu/themelio/api/internal/api/errors"
 	"github.com/tsamsiyu/themelio/api/internal/service"
-	"github.com/tsamsiyu/themelio/sdk/pkg/validation"
 )
 
 type ResourceHandler struct {
@@ -133,22 +132,6 @@ func getParamsFromContextWithoutName(c *gin.Context) (service.Params, error) {
 	kind := c.Param("kind")
 	namespace := c.Param("namespace")
 
-	if err := validation.ValidateTerm(group, "group"); err != nil {
-		return service.Params{}, err
-	}
-	if err := validation.ValidateTerm(version, "version"); err != nil {
-		return service.Params{}, err
-	}
-	if err := validation.ValidateTerm(kind, "kind"); err != nil {
-		return service.Params{}, err
-	}
-
-	if namespace != "" {
-		if err := validation.ValidateTerm(namespace, "namespace"); err != nil {
-			return service.Params{}, err
-		}
-	}
-
 	return service.Params{
 		Group:     group,
 		Version:   version,
@@ -164,25 +147,6 @@ func getParamsFromContext(c *gin.Context) (service.Params, error) {
 	kind := c.Param("kind")
 	namespace := c.Param("namespace")
 	name := c.Param("name")
-
-	if err := validation.ValidateTerm(group, "group"); err != nil {
-		return service.Params{}, err
-	}
-	if err := validation.ValidateTerm(version, "version"); err != nil {
-		return service.Params{}, err
-	}
-	if err := validation.ValidateTerm(kind, "kind"); err != nil {
-		return service.Params{}, err
-	}
-	if err := validation.ValidateTerm(name, "name"); err != nil {
-		return service.Params{}, err
-	}
-
-	if namespace != "" {
-		if err := validation.ValidateTerm(namespace, "namespace"); err != nil {
-			return service.Params{}, err
-		}
-	}
 
 	return service.Params{
 		Group:     group,

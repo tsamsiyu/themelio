@@ -3,7 +3,7 @@ package types
 import (
 	"time"
 
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	sdkmeta "github.com/tsamsiyu/themelio/sdk/pkg/types/meta"
 )
 
 type WatchEventType string
@@ -16,9 +16,9 @@ const (
 )
 
 type WatchEvent struct {
-	Type      WatchEventType             `json:"type"`
-	Object    *unstructured.Unstructured `json:"object"`
-	Timestamp time.Time                  `json:"timestamp"`
-	Revision  int64                      `json:"revision,omitempty"`
-	Error     error                      `json:"error,omitempty"`
+	Type      WatchEventType  `json:"type"`
+	Object    *sdkmeta.Object `json:"object"`
+	Timestamp time.Time       `json:"timestamp"`
+	Revision  int64           `json:"revision,omitempty"`
+	Error     error           `json:"error,omitempty"`
 }

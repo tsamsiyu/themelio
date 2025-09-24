@@ -78,3 +78,4 @@ TODO:
 - watcher reconciliation
 - optimistic locking
 - filtering by labels
+- objects list

@@ -8,12 +8,11 @@ import (
 	"github.com/stretchr/testify/mock"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"github.com/tsamsiyu/themelio/api/internal/lib"
 	"github.com/tsamsiyu/themelio/api/internal/repository"
-	"github.com/tsamsiyu/themelio/api/internal/repository/types"
 	"github.com/tsamsiyu/themelio/api/mocks"
+	sdkmeta "github.com/tsamsiyu/themelio/sdk/pkg/types/meta"
 )
 
 func TestResourceRepository_Get(t *testing.T) {
@@ -26,16 +25,25 @@ func TestResourceRepository_Get(t *testing.T) {
 	repo := repository.NewResourceRepository(logger, mockStore, mockClient, watchConfig, backoffManager)
 
 	ctx := context.Background()
-	key := types.NewNamespacedObjectKey("example.com", "v1", "TestResource", "default", "test-resource")
-	expectedResource := &unstructured.Unstructured{
-		Object: map[string]interface{}{
-			"apiVersion": "example.com/v1",
-			"kind":       "TestResource",
-			"metadata": map[string]interface{}{
-				"name":      "test-resource",
-				"namespace": "default",
-			},
+	key := sdkmeta.ObjectKey{
+		ObjectType: sdkmeta.ObjectType{
+			Group:     "example.com",
+			Version:   "v1",
+			Kind:      "TestResource",
+			Namespace: "default",
 		},
+		Name: "test-resource",
+	}
+	expectedResource := &sdkmeta.Object{
+		ObjectKey: &key,
+		ObjectMeta: &sdkmeta.ObjectMeta{
+			Labels:      map[string]string{},
+			Annotations: map[string]string{},
+		},
+		SystemMeta: &sdkmeta.SystemMeta{
+			UID: "test-uid",
+		},
+		Spec: map[string]interface{}{},
 	}
 
 	// Mock expectations
@@ -57,25 +65,34 @@ func TestResourceRepository_List(t *testing.T) {
 	repo := repository.NewResourceRepository(logger, mockStore, mockClient, watchConfig, backoffManager)
 
 	ctx := context.Background()
-	key := types.NewNamespacedResourceKey("example.com", "v1", "TestResource", "default")
-	expectedResources := []*unstructured.Unstructured{
+	objType := &sdkmeta.ObjectType{
+		Group:     "example.com",
+		Version:   "v1",
+		Kind:      "TestResource",
+		Namespace: "default",
+	}
+	expectedResources := []*sdkmeta.Object{
 		{
-			Object: map[string]interface{}{
-				"apiVersion": "example.com/v1",
-				"kind":       "TestResource",
-				"metadata": map[string]interface{}{
-					"name":      "test-resource-1",
-					"namespace": "default",
-				},
+			ObjectKey: &sdkmeta.ObjectKey{
+				ObjectType: *objType,
+				Name:       "test-resource-1",
 			},
+			ObjectMeta: &sdkmeta.ObjectMeta{
+				Labels:      map[string]string{},
+				Annotations: map[string]string{},
+			},
+			SystemMeta: &sdkmeta.SystemMeta{
+				UID: "test-uid-1",
+			},
+			Spec: map[string]interface{}{},
 		},
 	}
 
 	// Mock expectations
-	mockStore.EXPECT().List(ctx, key, 100).Return(expectedResources, nil)
+	mockStore.EXPECT().List(ctx, objType, 100).Return(expectedResources, nil)
 
 	// Test
-	result, err := repo.List(ctx, key, 100)
+	result, err := repo.List(ctx, objType, 100)
 	assert.NoError(t, err)
 	assert.Equal(t, expectedResources, result)
 }
@@ -90,21 +107,30 @@ func TestResourceRepository_MarkDeleted(t *testing.T) {
 	repo := repository.NewResourceRepository(logger, mockStore, mockClient, watchConfig, backoffManager)
 
 	ctx := context.Background()
-	key := types.NewNamespacedObjectKey("example.com", "v1", "TestResource", "default", "test-resource")
-	resource := &unstructured.Unstructured{
-		Object: map[string]interface{}{
-			"apiVersion": "example.com/v1",
-			"kind":       "TestResource",
-			"metadata": map[string]interface{}{
-				"name":      "test-resource",
-				"namespace": "default",
-			},
+	key := sdkmeta.ObjectKey{
+		ObjectType: sdkmeta.ObjectType{
+			Group:     "example.com",
+			Version:   "v1",
+			Kind:      "TestResource",
+			Namespace: "default",
 		},
+		Name: "test-resource",
+	}
+	resource := &sdkmeta.Object{
+		ObjectKey: &key,
+		ObjectMeta: &sdkmeta.ObjectMeta{
+			Labels:      map[string]string{},
+			Annotations: map[string]string{},
+		},
+		SystemMeta: &sdkmeta.SystemMeta{
+			UID: "test-uid",
+		},
+		Spec: map[string]interface{}{},
 	}
 
 	// Mock expectations - simplified to match actual behavior
 	mockStore.EXPECT().Get(ctx, key).Return(resource, nil)
-	mockStore.EXPECT().BuildPutTxOp(key, mock.Anything).Return(clientv3.OpPut(key.String(), "{}"), nil)
+	mockStore.EXPECT().BuildPutTxOp(mock.Anything).Return(clientv3.OpPut("/example.com/v1/TestResource/default/test-resource", "{}"), nil)
 	mockClient.EXPECT().ExecuteTransaction(ctx, mock.Anything).Return(nil)
 
 	// Test

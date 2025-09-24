@@ -5,20 +5,20 @@ import (
 	"encoding/json"
 
 	"go.uber.org/zap"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	internalerrors "github.com/tsamsiyu/themelio/api/internal/errors"
 	"github.com/tsamsiyu/themelio/api/internal/repository"
-	themeliotypes "github.com/tsamsiyu/themelio/sdk/pkg/types/crd"
-	themeliovalidation "github.com/tsamsiyu/themelio/sdk/pkg/validation"
+	sdkmeta "github.com/tsamsiyu/themelio/sdk/pkg/types/meta"
+	sdkschema "github.com/tsamsiyu/themelio/sdk/pkg/types/schema"
+	sdkvalidation "github.com/tsamsiyu/themelio/sdk/pkg/validation"
 )
 
 type SchemaService interface {
-	// CRD management methods
+	// Schema management methods
 	Replace(ctx context.Context, jsonData []byte) error
 	Delete(ctx context.Context, group, kind string) error
-	Get(ctx context.Context, group, kind string) (*themeliotypes.CustomResourceDefinition, error)
-	List(ctx context.Context) ([]*themeliotypes.CustomResourceDefinition, error)
+	Get(ctx context.Context, group, kind string) (*sdkschema.ObjectSchema, error)
+	List(ctx context.Context) ([]*sdkschema.ObjectSchema, error)
 }
 
 type schemaService struct {
@@ -34,63 +34,63 @@ func NewSchemaService(logger *zap.Logger, repo repository.SchemaRepository) Sche
 }
 
 func (s *schemaService) Replace(ctx context.Context, jsonData []byte) error {
-	var crd themeliotypes.CustomResourceDefinition
-	if err := json.Unmarshal(jsonData, &crd); err != nil {
-		return internalerrors.NewInvalidInputError("failed to parse CRD JSON: " + err.Error())
+	var schema sdkschema.ObjectSchema
+	if err := json.Unmarshal(jsonData, &schema); err != nil {
+		return internalerrors.NewInvalidInputError("failed to parse ObjectSchema JSON: " + err.Error())
 	}
 
-	if err := themeliovalidation.ValidateCRD(&crd); err != nil {
+	if err := sdkvalidation.ValidateCRD(&schema); err != nil {
 		return internalerrors.NewInvalidInputError(err.Error())
 	}
 
-	if err := s.repo.StoreCRD(ctx, &crd); err != nil {
+	if err := s.repo.StoreSchema(ctx, &schema); err != nil {
 		return err
 	}
 
-	s.logger.Info("CRD replaced successfully",
-		zap.String("group", crd.Spec.Group),
-		zap.String("kind", crd.Spec.Kind))
+	s.logger.Info("Schema replaced successfully",
+		zap.String("group", schema.Group),
+		zap.String("kind", schema.Kind))
 
 	return nil
 }
 
-// todo: do not allow deleting CRDs that are in use
+// todo: do not allow deleting schemas that are in use
 func (s *schemaService) Delete(ctx context.Context, group, kind string) error {
-	if err := s.repo.DeleteCRD(ctx, group, kind); err != nil {
+	if err := s.repo.DeleteSchema(ctx, group, kind); err != nil {
 		return err
 	}
 
-	s.logger.Info("CRD deleted successfully",
+	s.logger.Info("Schema deleted successfully",
 		zap.String("group", group),
 		zap.String("kind", kind))
 
 	return nil
 }
 
-func (s *schemaService) Get(ctx context.Context, group, kind string) (*themeliotypes.CustomResourceDefinition, error) {
-	return s.repo.GetCRD(ctx, group, kind)
+func (s *schemaService) Get(ctx context.Context, group, kind string) (*sdkschema.ObjectSchema, error) {
+	return s.repo.GetSchema(ctx, group, kind)
 }
 
-func (s *schemaService) List(ctx context.Context) ([]*themeliotypes.CustomResourceDefinition, error) {
-	return s.repo.ListCRDs(ctx)
+func (s *schemaService) List(ctx context.Context) ([]*sdkschema.ObjectSchema, error) {
+	return s.repo.ListSchemas(ctx)
 }
 
-func ValidateResource(obj *unstructured.Unstructured, crd *themeliotypes.CustomResourceDefinition) error {
-	gvk := obj.GroupVersionKind()
+func ValidateResource(obj *sdkmeta.Object, schema *sdkschema.ObjectSchema) error {
+	version := obj.ObjectKey.Version
 
-	var schema interface{}
-	for _, version := range crd.Spec.Versions {
-		if version.Name == gvk.Version {
-			schema = version.Schema
+	var versionSchema interface{}
+	for _, v := range schema.Versions {
+		if v.Name == version {
+			versionSchema = v.Schema
 			break
 		}
 	}
 
-	if schema == nil {
-		return internalerrors.NewInvalidInputError("Schema not found for version: " + gvk.Version)
+	if versionSchema == nil {
+		return internalerrors.NewInvalidInputError("Schema not found for version: " + version)
 	}
 
-	if err := themeliovalidation.ValidateResourceAgainstSchema(obj.Object, schema); err != nil {
+	if err := sdkvalidation.ValidateResourceAgainstSchema(obj, versionSchema); err != nil {
 		return internalerrors.NewInvalidInputError(err.Error())
 	}
 

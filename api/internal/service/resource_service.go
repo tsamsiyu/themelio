@@ -7,13 +7,12 @@ import (
 
 	jsonpatch "github.com/evanphx/json-patch/v5"
 	"go.uber.org/zap"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	internalerrors "github.com/tsamsiyu/themelio/api/internal/errors"
 	"github.com/tsamsiyu/themelio/api/internal/repository"
-	"github.com/tsamsiyu/themelio/api/internal/repository/types"
 	sharedservice "github.com/tsamsiyu/themelio/api/internal/service/shared"
-	themeliotypes "github.com/tsamsiyu/themelio/sdk/pkg/types/crd"
+	sdkmeta "github.com/tsamsiyu/themelio/sdk/pkg/types/meta"
+	sdkschema "github.com/tsamsiyu/themelio/sdk/pkg/types/schema"
 )
 
 var SENSITIVE_PATHS = []string{
@@ -33,10 +32,10 @@ type Params struct {
 
 type ResourceService interface {
 	ReplaceResource(ctx context.Context, params Params, jsonData []byte) error
-	GetResource(ctx context.Context, params Params) (*unstructured.Unstructured, error)
-	ListResources(ctx context.Context, params Params) ([]*unstructured.Unstructured, error)
+	GetResource(ctx context.Context, params Params) (*sdkmeta.Object, error)
+	ListResources(ctx context.Context, params Params) ([]*sdkmeta.Object, error)
 	DeleteResource(ctx context.Context, params Params) error
-	PatchResource(ctx context.Context, params Params, patchData []byte) (*unstructured.Unstructured, error)
+	PatchResource(ctx context.Context, params Params, patchData []byte) (*sdkmeta.Object, error)
 }
 
 type resourceService struct {
@@ -54,42 +53,37 @@ func NewResourceService(logger *zap.Logger, repo repository.ResourceRepository, 
 }
 
 func (s *resourceService) ReplaceResource(ctx context.Context, params Params, jsonData []byte) error {
-	payload, err := s.convertJSONToUnstructured(jsonData)
+	payload, err := s.convertJSONToObject(jsonData)
 	if err != nil {
 		return err
 	}
 
 	paramsWithName := params
-	paramsWithName.Name = payload.GetName()
+	paramsWithName.Name = payload.ObjectKey.Name
 
-	crd, err := s.schemaService.Get(ctx, paramsWithName.Group, paramsWithName.Kind)
+	schema, err := s.schemaService.Get(ctx, paramsWithName.Group, paramsWithName.Kind)
 	if err != nil {
 		return err
 	}
 
-	objectKey, err := getObjectKeyFromParams(crd, &paramsWithName)
-	if err != nil {
+	if err := sharedservice.ValidateResource(payload, schema); err != nil {
 		return err
 	}
 
-	if err := sharedservice.ValidateResource(payload, crd); err != nil {
-		return err
-	}
-
-	if err := s.repo.Replace(ctx, objectKey, payload); err != nil {
+	if err := s.repo.Replace(ctx, payload); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func (s *resourceService) GetResource(ctx context.Context, params Params) (*unstructured.Unstructured, error) {
-	crd, err := s.schemaService.Get(ctx, params.Group, params.Kind)
+func (s *resourceService) GetResource(ctx context.Context, params Params) (*sdkmeta.Object, error) {
+	schema, err := s.schemaService.Get(ctx, params.Group, params.Kind)
 	if err != nil {
 		return nil, err
 	}
 
-	objectKey, err := getObjectKeyFromParams(crd, &params)
+	objectKey, err := getObjectKeyFromParams(schema, &params)
 	if err != nil {
 		return nil, err
 	}
@@ -97,27 +91,27 @@ func (s *resourceService) GetResource(ctx context.Context, params Params) (*unst
 	return s.repo.Get(ctx, objectKey)
 }
 
-func (s *resourceService) ListResources(ctx context.Context, params Params) ([]*unstructured.Unstructured, error) {
-	crd, err := s.schemaService.Get(ctx, params.Group, params.Kind)
+func (s *resourceService) ListResources(ctx context.Context, params Params) ([]*sdkmeta.Object, error) {
+	schema, err := s.schemaService.Get(ctx, params.Group, params.Kind)
 	if err != nil {
 		return nil, err
 	}
 
-	resourceKey, err := getResourceKeyFromParams(crd, &params)
+	typeMeta, err := getObjectTypeFromParams(schema, &params)
 	if err != nil {
 		return nil, err
 	}
 
-	return s.repo.List(ctx, resourceKey, 0)
+	return s.repo.List(ctx, typeMeta, 0)
 }
 
 func (s *resourceService) DeleteResource(ctx context.Context, params Params) error {
-	crd, err := s.schemaService.Get(ctx, params.Group, params.Kind)
+	schema, err := s.schemaService.Get(ctx, params.Group, params.Kind)
 	if err != nil {
 		return err
 	}
 
-	objectKey, err := getObjectKeyFromParams(crd, &params)
+	objectKey, err := getObjectKeyFromParams(schema, &params)
 	if err != nil {
 		return err
 	}
@@ -125,13 +119,8 @@ func (s *resourceService) DeleteResource(ctx context.Context, params Params) err
 	return s.repo.MarkDeleted(ctx, objectKey)
 }
 
-func (s *resourceService) PatchResource(ctx context.Context, params Params, patchData []byte) (*unstructured.Unstructured, error) {
-	crd, err := s.schemaService.Get(ctx, params.Group, params.Kind)
-	if err != nil {
-		return nil, err
-	}
-
-	objectKey, err := getObjectKeyFromParams(crd, &params)
+func (s *resourceService) PatchResource(ctx context.Context, params Params, patchData []byte) (*sdkmeta.Object, error) {
+	schema, err := s.schemaService.Get(ctx, params.Group, params.Kind)
 	if err != nil {
 		return nil, err
 	}
@@ -160,24 +149,24 @@ func (s *resourceService) PatchResource(ctx context.Context, params Params, patc
 		return nil, internalerrors.NewInvalidInputError("failed to apply patch: " + err.Error())
 	}
 
-	patchedResource, err := s.convertJSONToUnstructured(patchedJSON)
+	patchedResource, err := s.convertJSONToObject(patchedJSON)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := sharedservice.ValidateResource(patchedResource, crd); err != nil {
+	if err := sharedservice.ValidateResource(patchedResource, schema); err != nil {
 		return nil, err
 	}
 
-	if err := s.repo.Replace(ctx, objectKey, patchedResource); err != nil {
+	if err := s.repo.Replace(ctx, patchedResource); err != nil {
 		return nil, err
 	}
 
 	return patchedResource, nil
 }
 
-func (s *resourceService) convertJSONToUnstructured(jsonData []byte) (*unstructured.Unstructured, error) {
-	var obj unstructured.Unstructured
+func (s *resourceService) convertJSONToObject(jsonData []byte) (*sdkmeta.Object, error) {
+	var obj sdkmeta.Object
 	if err := json.Unmarshal(jsonData, &obj); err != nil {
 		return nil, internalerrors.NewInvalidInputError("failed to unmarshal object")
 	}
@@ -204,32 +193,50 @@ func (s *resourceService) validatePatchOperations(patch jsonpatch.Patch) error {
 	return nil
 }
 
-func getObjectKeyFromParams(
-	crd *themeliotypes.CustomResourceDefinition,
-	params *Params,
-) (types.ObjectKey, error) {
-	if crd.Spec.Scope == themeliotypes.ResourceScopeCluster {
-		// we just ignore namespace here as it's not needed for cluster-scoped resources
-		return types.NewClusterObjectKey(params.Group, params.Version, params.Kind, params.Name), nil
+func getObjectKeyFromParams(schema *sdkschema.ObjectSchema, params *Params) (sdkmeta.ObjectKey, error) {
+	if schema.Scope == sdkschema.ResourceScopeCluster {
+		return sdkmeta.ObjectKey{
+			ObjectType: sdkmeta.ObjectType{
+				Group:   params.Group,
+				Version: params.Version,
+				Kind:    params.Kind,
+			},
+			Name: params.Name,
+		}, nil
 	}
 
 	if params.Namespace == "" {
-		return types.ObjectKey{}, internalerrors.NewInvalidInputError("namespace is required for namespaced resource")
+		return sdkmeta.ObjectKey{}, internalerrors.NewInvalidInputError("namespace is required for namespaced resource")
 	}
-	return types.NewNamespacedObjectKey(params.Group, params.Version, params.Kind, params.Namespace, params.Name), nil
+
+	return sdkmeta.ObjectKey{
+		ObjectType: sdkmeta.ObjectType{
+			Group:     params.Group,
+			Version:   params.Version,
+			Kind:      params.Kind,
+			Namespace: params.Namespace,
+		},
+		Name: params.Name,
+	}, nil
 }
 
-func getResourceKeyFromParams(
-	crd *themeliotypes.CustomResourceDefinition,
-	params *Params,
-) (types.ResourceKey, error) {
-	if crd.Spec.Scope == themeliotypes.ResourceScopeCluster {
-		// we just ignore namespace here as it's not needed for cluster-scoped resources
-		return types.NewClusterResourceKey(params.Group, params.Version, params.Kind), nil
+func getObjectTypeFromParams(schema *sdkschema.ObjectSchema, params *Params) (*sdkmeta.ObjectType, error) {
+	if schema.Scope == sdkschema.ResourceScopeCluster {
+		return &sdkmeta.ObjectType{
+			Group:   params.Group,
+			Version: params.Version,
+			Kind:    params.Kind,
+		}, nil
 	}
 
 	if params.Namespace == "" {
-		return types.ResourceKey{}, internalerrors.NewInvalidInputError("namespace is required for namespaced resource")
+		return nil, internalerrors.NewInvalidInputError("namespace is required for namespaced resource")
 	}
-	return types.NewNamespacedResourceKey(params.Group, params.Version, params.Kind, params.Namespace), nil
+
+	return &sdkmeta.ObjectType{
+		Group:     params.Group,
+		Version:   params.Version,
+		Kind:      params.Kind,
+		Namespace: params.Namespace,
+	}, nil
 }

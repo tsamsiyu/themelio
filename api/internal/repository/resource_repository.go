@@ -7,21 +7,19 @@ import (
 	"github.com/pkg/errors"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	internalerrors "github.com/tsamsiyu/themelio/api/internal/errors"
 	"github.com/tsamsiyu/themelio/api/internal/lib"
 	"github.com/tsamsiyu/themelio/api/internal/repository/types"
+	sdkmeta "github.com/tsamsiyu/themelio/sdk/pkg/types/meta"
 )
 
 type ResourceRepository interface {
-	Replace(ctx context.Context, key types.ObjectKey, resource *unstructured.Unstructured) error
-	Get(ctx context.Context, key types.ObjectKey) (*unstructured.Unstructured, error)
-	List(ctx context.Context, key types.ResourceKey, limit int) ([]*unstructured.Unstructured, error)
-	Delete(ctx context.Context, key types.ObjectKey) error
-	Watch(ctx context.Context, key types.ResourceKey, eventChan chan<- types.WatchEvent) error
-	MarkDeleted(ctx context.Context, key types.ObjectKey) error
+	Replace(ctx context.Context, obj *sdkmeta.Object) error
+	Get(ctx context.Context, key sdkmeta.ObjectKey) (*sdkmeta.Object, error)
+	List(ctx context.Context, objType *sdkmeta.ObjectType, limit int) ([]*sdkmeta.Object, error)
+	Delete(ctx context.Context, key sdkmeta.ObjectKey) error
+	Watch(ctx context.Context, objType *sdkmeta.ObjectType, eventChan chan<- types.WatchEvent) error
+	MarkDeleted(ctx context.Context, key sdkmeta.ObjectKey) error
 	ListDeletions(ctx context.Context, lockKey string, lockExp time.Duration, batchLimit int) (*types.DeletionBatch, error)
 }
 
@@ -48,32 +46,34 @@ func NewResourceRepository(logger *zap.Logger, store ResourceStore, clientWrappe
 	}
 }
 
-func (r *resourceRepository) Replace(ctx context.Context, key types.ObjectKey, resource *unstructured.Unstructured) error {
-	oldResource, err := r.store.Get(ctx, key)
+func (r *resourceRepository) Replace(ctx context.Context, obj *sdkmeta.Object) error {
+	oldResource, err := r.store.Get(ctx, *obj.ObjectKey)
 	if err != nil && !types.IsNotFoundError(err) {
 		return err
 	}
 
-	var oldOwnerRefs []metav1.OwnerReference
-	if oldResource != nil {
-		oldOwnerRefs = oldResource.GetOwnerReferences()
+	now := time.Now()
+
+	if obj.SystemMeta == nil {
+		obj.SystemMeta = &sdkmeta.SystemMeta{
+			UID:               "TODO",
+			Revision:          "TODO",
+			CreationTimestamp: &now,
+		}
 	}
 
-	diff := types.CalculateOwnerReferenceDiff(
-		oldOwnerRefs,
-		resource.GetOwnerReferences(),
-	)
+	diff := types.CalculateOwnerReferenceDiffFromObjects(oldResource, obj)
 
 	var ops []clientv3.Op
 
-	setOp, err := r.store.BuildPutTxOp(key, resource)
+	setOp, err := r.store.BuildPutTxOp(obj)
 	if err != nil {
 		return err
 	}
 	ops = append(ops, setOp)
 
 	if len(diff.Deleted) > 0 || len(diff.Created) > 0 {
-		refOps, err := r.ownerRefOpBuilder.BuildDiffOperations(ctx, diff, key)
+		refOps, err := r.ownerRefOpBuilder.BuildDiffOperations(ctx, diff, *obj.ObjectKey)
 		if err != nil {
 			return errors.Wrap(err, "failed to create reference transaction operations")
 		}
@@ -83,24 +83,22 @@ func (r *resourceRepository) Replace(ctx context.Context, key types.ObjectKey, r
 	return r.clientWrapper.ExecuteTransaction(ctx, ops)
 }
 
-func (r *resourceRepository) Get(ctx context.Context, key types.ObjectKey) (*unstructured.Unstructured, error) {
+func (r *resourceRepository) Get(ctx context.Context, key sdkmeta.ObjectKey) (*sdkmeta.Object, error) {
 	return r.store.Get(ctx, key)
 }
 
-func (r *resourceRepository) List(ctx context.Context, key types.ResourceKey, limit int) ([]*unstructured.Unstructured, error) {
-	return r.store.List(ctx, key, limit)
+func (r *resourceRepository) List(ctx context.Context, objType *sdkmeta.ObjectType, limit int) ([]*sdkmeta.Object, error) {
+	return r.store.List(ctx, objType, limit)
 }
 
 // TODO: allow deleting only if lock is still valid
-func (r *resourceRepository) Delete(ctx context.Context, key types.ObjectKey) error {
-	resource, err := r.store.Get(ctx, key)
+func (r *resourceRepository) Delete(ctx context.Context, key sdkmeta.ObjectKey) error {
+	obj, err := r.store.Get(ctx, key)
 	if err != nil {
 		return err
 	}
 
-	ownerRefs := resource.GetOwnerReferences()
-
-	refOps, err := r.ownerRefOpBuilder.BuildDropOperations(ctx, ownerRefs, key)
+	refOps, err := r.ownerRefOpBuilder.BuildDropOperations(ctx, obj.ObjectMeta.OwnerReferences, key)
 	if err != nil {
 		return errors.Wrap(err, "failed to create owner reference deletion operations")
 	}
@@ -111,7 +109,7 @@ func (r *resourceRepository) Delete(ctx context.Context, key types.ObjectKey) er
 	}
 
 	childrenCleanupOps, err := r.deletionOpBuilder.BuildChildrenCleanupOperations(
-		resource,
+		obj,
 		childResources,
 	)
 	if err != nil {
@@ -119,15 +117,15 @@ func (r *resourceRepository) Delete(ctx context.Context, key types.ObjectKey) er
 	}
 
 	var ops []clientv3.Op
-	ops = append(ops, clientv3.OpDelete(key.String()))
+	ops = append(ops, clientv3.OpDelete(objectKeyToDbKey(key)))
 	ops = append(ops, refOps...)
 	ops = append(ops, childrenCleanupOps...)
 
 	return r.clientWrapper.ExecuteTransaction(ctx, ops)
 }
 
-func (r *resourceRepository) Watch(ctx context.Context, key types.ResourceKey, eventChan chan<- types.WatchEvent) error {
-	watchChan := r.watchManager.Watch(ctx, key)
+func (r *resourceRepository) Watch(ctx context.Context, objType *sdkmeta.ObjectType, eventChan chan<- types.WatchEvent) error {
+	watchChan := r.watchManager.Watch(ctx, objType, "")
 	go func() {
 		defer close(eventChan)
 		for event := range watchChan {
@@ -142,27 +140,27 @@ func (r *resourceRepository) Watch(ctx context.Context, key types.ResourceKey, e
 }
 
 // MarkDeleted marks a resource for deletion by setting deletionTimestamp and adding to deletion collection
-func (r *resourceRepository) MarkDeleted(ctx context.Context, key types.ObjectKey) error {
+func (r *resourceRepository) MarkDeleted(ctx context.Context, key sdkmeta.ObjectKey) error {
 	resource, err := r.store.Get(ctx, key)
 	if err != nil {
 		return errors.Wrap(err, "failed to get resource for deletion marking")
 	}
 
-	if resource.GetDeletionTimestamp() != nil {
+	if resource.SystemMeta.DeletionTimestamp != nil {
 		return nil // Already marked for deletion
 	}
 
-	now := metav1.NewTime(time.Now())
-	resource.SetDeletionTimestamp(&now)
+	now := time.Now()
+	resource.SystemMeta.DeletionTimestamp = &now
 
 	deletionOp, err := r.deletionOpBuilder.BuildMarkDeletionOperation(key)
 	if err != nil {
 		return errors.Wrap(err, "failed to build mark deletion operations")
 	}
 
-	updateOp, err := r.store.BuildPutTxOp(key, resource)
+	updateOp, err := r.store.BuildPutTxOp(resource)
 	if err != nil {
-		return internalerrors.NewMarshalingError("failed to build set operation for resource with deletion timestamp")
+		return errors.Wrap(err, "failed to build set operation for resource with deletion timestamp")
 	}
 
 	return r.clientWrapper.ExecuteTransaction(ctx, []clientv3.Op{*deletionOp, updateOp})

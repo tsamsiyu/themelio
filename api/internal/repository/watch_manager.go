@@ -8,6 +8,7 @@ import (
 
 	"github.com/tsamsiyu/themelio/api/internal/lib"
 	"github.com/tsamsiyu/themelio/api/internal/repository/types"
+	sdkmeta "github.com/tsamsiyu/themelio/sdk/pkg/types/meta"
 )
 
 type WatchManager struct {
@@ -29,16 +30,16 @@ func NewWatchManager(store ResourceStore, logger *zap.Logger, config WatchConfig
 	}
 }
 
-func (m *WatchManager) Watch(ctx context.Context, key types.ResourceKey) <-chan types.WatchEvent {
+func (m *WatchManager) Watch(ctx context.Context, objType *sdkmeta.ObjectType, namespace string) <-chan types.WatchEvent {
 	clientChan := make(chan types.WatchEvent, 100)
-	keyStr := key.ToKey()
+	keyStr := objectTypeToDbKey(objType)
 
 	m.handlersMu.Lock()
 	defer m.handlersMu.Unlock()
 
 	handler, exists := m.handlers[keyStr]
 	if !exists {
-		handler = NewWatchHandler(key, m.store, m.logger, m.config, m.backoff)
+		handler = NewWatchHandler(objType, m.store, m.logger, m.config, m.backoff)
 		m.handlers[keyStr] = handler
 		go m.startHandler(ctx, handler)
 	}
@@ -58,7 +59,7 @@ func (m *WatchManager) startHandler(ctx context.Context, handler *WatchHandler) 
 		for event := range eventChan {
 			if event.Type == types.WatchEventTypeError {
 				m.logger.Error("Handler error",
-					zap.String("key", handler.key.ToKey()),
+					zap.String("key", objectTypeToDbKey(handler.objType)),
 					zap.Error(event.Error))
 			}
 		}

@@ -7,12 +7,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"go.uber.org/zap"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"github.com/tsamsiyu/themelio/api/internal/lib"
 	"github.com/tsamsiyu/themelio/api/internal/repository"
 	"github.com/tsamsiyu/themelio/api/internal/repository/types"
 	"github.com/tsamsiyu/themelio/api/mocks"
+	sdkmeta "github.com/tsamsiyu/themelio/sdk/pkg/types/meta"
 )
 
 func TestResourceRepository_Delete_ResourceWithoutOwnerReferences(t *testing.T) {
@@ -25,20 +25,27 @@ func TestResourceRepository_Delete_ResourceWithoutOwnerReferences(t *testing.T) 
 	repo := repository.NewResourceRepository(logger, mockStore, mockClient, watchConfig, backoffManager)
 
 	ctx := context.Background()
-	key := types.NewNamespacedObjectKey("example.com", "v1", "TestResource", "default", "test-resource")
-	resource := &unstructured.Unstructured{
-		Object: map[string]interface{}{
-			"apiVersion": "example.com/v1",
-			"kind":       "TestResource",
-			"metadata": map[string]interface{}{
-				"name":      "test-resource",
-				"namespace": "default",
-				"uid":       "test-uid",
-				// No owner references
-			},
-			"spec": map[string]interface{}{
-				"replicas": 3,
-			},
+	key := sdkmeta.ObjectKey{
+		ObjectType: sdkmeta.ObjectType{
+			Group:     "example.com",
+			Version:   "v1",
+			Kind:      "TestResource",
+			Namespace: "default",
+		},
+		Name: "test-resource",
+	}
+	resource := &sdkmeta.Object{
+		ObjectKey: &key,
+		ObjectMeta: &sdkmeta.ObjectMeta{
+			Labels:          map[string]string{},
+			Annotations:     map[string]string{},
+			OwnerReferences: []sdkmeta.OwnerReference{}, // No owner references
+		},
+		SystemMeta: &sdkmeta.SystemMeta{
+			UID: "test-uid",
+		},
+		Spec: map[string]interface{}{
+			"replicas": 3,
 		},
 	}
 
@@ -51,7 +58,7 @@ func TestResourceRepository_Delete_ResourceWithoutOwnerReferences(t *testing.T) 
 	// 3. QueryChildResources will be called to find child resources
 	// QueryChildResources calls GetReversedOwnerReferences which calls client.Get
 	// Since there are no owner references, it will return empty data
-	refKey := "/ref" + key.String()
+	refKey := "/ref/example.com/v1/TestResource/default/test-resource"
 	mockClient.EXPECT().Get(ctx, refKey).Return([]byte(""), nil)
 
 	// 4. BuildChildrenCleanupOperations will be called with empty child resources
@@ -74,32 +81,50 @@ func TestResourceRepository_Delete_ResourceWithOwnerReferences(t *testing.T) {
 	repo := repository.NewResourceRepository(logger, mockStore, mockClient, watchConfig, backoffManager)
 
 	ctx := context.Background()
-	key := types.NewNamespacedObjectKey("example.com", "v1", "TestResource", "default", "test-resource")
-	resource := &unstructured.Unstructured{
-		Object: map[string]interface{}{
-			"apiVersion": "example.com/v1",
-			"kind":       "TestResource",
-			"metadata": map[string]interface{}{
-				"name":      "test-resource",
-				"namespace": "default",
-				"ownerReferences": []interface{}{
-					map[string]interface{}{
-						"apiVersion": "apps/v1",
-						"kind":       "Deployment",
-						"name":       "parent-deployment",
-						"uid":        "parent-uid",
+	key := sdkmeta.ObjectKey{
+		ObjectType: sdkmeta.ObjectType{
+			Group:     "example.com",
+			Version:   "v1",
+			Kind:      "TestResource",
+			Namespace: "default",
+		},
+		Name: "test-resource",
+	}
+	resource := &sdkmeta.Object{
+		ObjectKey: &key,
+		ObjectMeta: &sdkmeta.ObjectMeta{
+			Labels:      map[string]string{},
+			Annotations: map[string]string{},
+			OwnerReferences: []sdkmeta.OwnerReference{
+				{
+					TypeMeta: &sdkmeta.ObjectType{
+						Group:     "apps",
+						Version:   "v1",
+						Kind:      "Deployment",
+						Namespace: "default",
 					},
-					map[string]interface{}{
-						"apiVersion": "apps/v1",
-						"kind":       "StatefulSet",
-						"name":       "another-parent",
-						"uid":        "another-parent-uid",
+					Name:               "parent-deployment",
+					UID:                "parent-uid",
+					BlockOwnerDeletion: true,
+				},
+				{
+					TypeMeta: &sdkmeta.ObjectType{
+						Group:     "apps",
+						Version:   "v1",
+						Kind:      "StatefulSet",
+						Namespace: "default",
 					},
+					Name:               "another-parent",
+					UID:                "another-parent-uid",
+					BlockOwnerDeletion: true,
 				},
 			},
-			"spec": map[string]interface{}{
-				"replicas": 3,
-			},
+		},
+		SystemMeta: &sdkmeta.SystemMeta{
+			UID: "test-uid",
+		},
+		Spec: map[string]interface{}{
+			"replicas": 3,
 		},
 	}
 
@@ -124,19 +149,27 @@ func TestResourceRepository_Delete_ResourceWithChildResources(t *testing.T) {
 	repo := repository.NewResourceRepository(logger, mockStore, mockClient, watchConfig, backoffManager)
 
 	ctx := context.Background()
-	key := types.NewNamespacedObjectKey("example.com", "v1", "TestResource", "default", "parent-resource")
-	resource := &unstructured.Unstructured{
-		Object: map[string]interface{}{
-			"apiVersion": "example.com/v1",
-			"kind":       "TestResource",
-			"metadata": map[string]interface{}{
-				"name":      "parent-resource",
-				"namespace": "default",
-				"uid":       "parent-uid",
-			},
-			"spec": map[string]interface{}{
-				"replicas": 3,
-			},
+	key := sdkmeta.ObjectKey{
+		ObjectType: sdkmeta.ObjectType{
+			Group:     "example.com",
+			Version:   "v1",
+			Kind:      "TestResource",
+			Namespace: "default",
+		},
+		Name: "parent-resource",
+	}
+	resource := &sdkmeta.Object{
+		ObjectKey: &key,
+		ObjectMeta: &sdkmeta.ObjectMeta{
+			Labels:          map[string]string{},
+			Annotations:     map[string]string{},
+			OwnerReferences: []sdkmeta.OwnerReference{},
+		},
+		SystemMeta: &sdkmeta.SystemMeta{
+			UID: "parent-uid",
+		},
+		Spec: map[string]interface{}{
+			"replicas": 3,
 		},
 	}
 
@@ -161,7 +194,15 @@ func TestResourceRepository_Delete_ResourceNotFound(t *testing.T) {
 	repo := repository.NewResourceRepository(logger, mockStore, mockClient, watchConfig, backoffManager)
 
 	ctx := context.Background()
-	key := types.NewNamespacedObjectKey("example.com", "v1", "TestResource", "default", "nonexistent-resource")
+	key := sdkmeta.ObjectKey{
+		ObjectType: sdkmeta.ObjectType{
+			Group:     "example.com",
+			Version:   "v1",
+			Kind:      "TestResource",
+			Namespace: "default",
+		},
+		Name: "nonexistent-resource",
+	}
 
 	// Mock expectations - resource not found
 	mockStore.EXPECT().Get(ctx, key).Return(nil, types.NewNotFoundError("resource not found"))
@@ -182,26 +223,39 @@ func TestResourceRepository_Delete_ErrorDuringOwnerReferenceCleanup(t *testing.T
 	repo := repository.NewResourceRepository(logger, mockStore, mockClient, watchConfig, backoffManager)
 
 	ctx := context.Background()
-	key := types.NewNamespacedObjectKey("example.com", "v1", "TestResource", "default", "test-resource")
-	resource := &unstructured.Unstructured{
-		Object: map[string]interface{}{
-			"apiVersion": "example.com/v1",
-			"kind":       "TestResource",
-			"metadata": map[string]interface{}{
-				"name":      "test-resource",
-				"namespace": "default",
-				"ownerReferences": []interface{}{
-					map[string]interface{}{
-						"apiVersion": "apps/v1",
-						"kind":       "Deployment",
-						"name":       "parent-deployment",
-						"uid":        "parent-uid",
+	key := sdkmeta.ObjectKey{
+		ObjectType: sdkmeta.ObjectType{
+			Group:     "example.com",
+			Version:   "v1",
+			Kind:      "TestResource",
+			Namespace: "default",
+		},
+		Name: "test-resource",
+	}
+	resource := &sdkmeta.Object{
+		ObjectKey: &key,
+		ObjectMeta: &sdkmeta.ObjectMeta{
+			Labels:      map[string]string{},
+			Annotations: map[string]string{},
+			OwnerReferences: []sdkmeta.OwnerReference{
+				{
+					TypeMeta: &sdkmeta.ObjectType{
+						Group:     "apps",
+						Version:   "v1",
+						Kind:      "Deployment",
+						Namespace: "default",
 					},
+					Name:               "parent-deployment",
+					UID:                "parent-uid",
+					BlockOwnerDeletion: true,
 				},
 			},
-			"spec": map[string]interface{}{
-				"replicas": 3,
-			},
+		},
+		SystemMeta: &sdkmeta.SystemMeta{
+			UID: "test-uid",
+		},
+		Spec: map[string]interface{}{
+			"replicas": 3,
 		},
 	}
 

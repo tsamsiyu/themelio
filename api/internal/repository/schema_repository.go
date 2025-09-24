@@ -3,7 +3,6 @@ package repository
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"strings"
 
 	"github.com/pkg/errors"
@@ -12,14 +11,14 @@ import (
 
 	internalerrors "github.com/tsamsiyu/themelio/api/internal/errors"
 	"github.com/tsamsiyu/themelio/api/internal/repository/types"
-	themeliotypes "github.com/tsamsiyu/themelio/sdk/pkg/types/crd"
+	sdkschema "github.com/tsamsiyu/themelio/sdk/pkg/types/schema"
 )
 
 type SchemaRepository interface {
-	StoreCRD(ctx context.Context, crd *themeliotypes.CustomResourceDefinition) error
-	GetCRD(ctx context.Context, group, kind string) (*themeliotypes.CustomResourceDefinition, error)
-	DeleteCRD(ctx context.Context, group, kind string) error
-	ListCRDs(ctx context.Context) ([]*themeliotypes.CustomResourceDefinition, error)
+	StoreSchema(ctx context.Context, schema *sdkschema.ObjectSchema) error
+	GetSchema(ctx context.Context, group, kind string) (*sdkschema.ObjectSchema, error)
+	DeleteSchema(ctx context.Context, group, kind string) error
+	ListSchemas(ctx context.Context) ([]*sdkschema.ObjectSchema, error)
 }
 
 type schemaRepository struct {
@@ -34,84 +33,79 @@ func NewSchemaRepository(logger *zap.Logger, etcdClient *clientv3.Client) Schema
 	}
 }
 
-// Helper function for etcd key generation
-func (r *schemaRepository) crdKey(group, kind string) string {
-	return fmt.Sprintf("/crd/%s/%s", group, kind)
-}
-
-// CRD management methods
-func (r *schemaRepository) StoreCRD(ctx context.Context, crd *themeliotypes.CustomResourceDefinition) error {
-	crdData, err := json.Marshal(crd)
+// Schema management methods
+func (r *schemaRepository) StoreSchema(ctx context.Context, schema *sdkschema.ObjectSchema) error {
+	schemaData, err := json.Marshal(schema)
 	if err != nil {
-		return internalerrors.NewMarshalingError("Failed to marshal CRD")
+		return internalerrors.NewMarshalingError("Failed to marshal ObjectSchema")
 	}
 
-	key := r.crdKey(crd.Spec.Group, crd.Spec.Kind)
-	_, err = r.etcdClient.Put(ctx, key, string(crdData))
+	key := schemaDbKey(schema.Group, schema.Kind)
+	_, err = r.etcdClient.Put(ctx, key, string(schemaData))
 	if err != nil {
-		return errors.Wrap(err, "failed to store CRD in etcd")
+		return errors.Wrap(err, "failed to store ObjectSchema in etcd")
 	}
 
-	r.logger.Info("CRD stored successfully",
-		zap.String("group", crd.Spec.Group),
-		zap.String("kind", crd.Spec.Kind))
+	r.logger.Info("ObjectSchema stored successfully",
+		zap.String("group", schema.Group),
+		zap.String("kind", schema.Kind))
 
 	return nil
 }
 
-func (r *schemaRepository) GetCRD(ctx context.Context, group, kind string) (*themeliotypes.CustomResourceDefinition, error) {
-	key := r.crdKey(group, kind)
+func (r *schemaRepository) GetSchema(ctx context.Context, group, kind string) (*sdkschema.ObjectSchema, error) {
+	key := schemaDbKey(group, kind)
 	resp, err := r.etcdClient.Get(ctx, key)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to get CRD from etcd")
+		return nil, errors.Wrap(err, "failed to get ObjectSchema from etcd")
 	}
 
 	if len(resp.Kvs) == 0 {
 		return nil, types.NewNotFoundError(key)
 	}
 
-	var crd themeliotypes.CustomResourceDefinition
-	if err := json.Unmarshal(resp.Kvs[0].Value, &crd); err != nil {
-		return nil, internalerrors.NewMarshalingError("Failed to unmarshal CRD")
+	var schema sdkschema.ObjectSchema
+	if err := json.Unmarshal(resp.Kvs[0].Value, &schema); err != nil {
+		return nil, internalerrors.NewMarshalingError("Failed to unmarshal ObjectSchema")
 	}
 
-	return &crd, nil
+	return &schema, nil
 }
 
-func (r *schemaRepository) DeleteCRD(ctx context.Context, group, kind string) error {
-	key := r.crdKey(group, kind)
+func (r *schemaRepository) DeleteSchema(ctx context.Context, group, kind string) error {
+	key := schemaDbKey(group, kind)
 	_, err := r.etcdClient.Delete(ctx, key)
 	if err != nil {
-		return errors.Wrap(err, "failed to delete CRD from etcd")
+		return errors.Wrap(err, "failed to delete ObjectSchema from etcd")
 	}
 
-	r.logger.Info("CRD deleted successfully",
+	r.logger.Info("ObjectSchema deleted successfully",
 		zap.String("group", group),
 		zap.String("kind", kind))
 
 	return nil
 }
 
-func (r *schemaRepository) ListCRDs(ctx context.Context) ([]*themeliotypes.CustomResourceDefinition, error) {
-	resp, err := r.etcdClient.Get(ctx, "/crd/", clientv3.WithPrefix())
+func (r *schemaRepository) ListSchemas(ctx context.Context) ([]*sdkschema.ObjectSchema, error) {
+	resp, err := r.etcdClient.Get(ctx, "/schema/", clientv3.WithPrefix())
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to list CRDs from etcd")
+		return nil, errors.Wrap(err, "failed to list ObjectSchemas from etcd")
 	}
 
-	var crds []*themeliotypes.CustomResourceDefinition
+	var schemas []*sdkschema.ObjectSchema
 	for _, kv := range resp.Kvs {
 		key := string(kv.Key)
 		if strings.Count(key, "/") != 2 {
 			continue
 		}
 
-		var crd themeliotypes.CustomResourceDefinition
-		if err := json.Unmarshal(kv.Value, &crd); err != nil {
-			r.logger.Error("Failed to unmarshal CRD", zap.String("key", key), zap.Error(err))
+		var schema sdkschema.ObjectSchema
+		if err := json.Unmarshal(kv.Value, &schema); err != nil {
+			r.logger.Error("Failed to unmarshal ObjectSchema", zap.String("key", key), zap.Error(err))
 			continue
 		}
-		crds = append(crds, &crd)
+		schemas = append(schemas, &schema)
 	}
 
-	return crds, nil
+	return schemas, nil
 }

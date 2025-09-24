@@ -5,15 +5,14 @@ import (
 	"time"
 
 	"go.uber.org/zap"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"github.com/tsamsiyu/themelio/api/internal/repository"
-	"github.com/tsamsiyu/themelio/api/internal/repository/types"
+	sdkmeta "github.com/tsamsiyu/themelio/sdk/pkg/types/meta"
 )
 
 // DeletionEvent represents a resource that needs to be processed for deletion
 type DeletionEvent struct {
-	ObjectKey types.ObjectKey
+	ObjectKey sdkmeta.ObjectKey
 	Timestamp time.Time
 }
 
@@ -121,13 +120,11 @@ func (w *Worker) pollDeletions(ctx context.Context) {
 
 		select {
 		case w.eventChan <- event:
-			w.logger.Debug("Sent deletion event to channel",
-				zap.String("objectKey", objectKey.String()))
+			w.logger.Debug("Sent deletion event to channel", zap.Any("objectKey", objectKey))
 		case <-ctx.Done():
 			return
 		default:
-			w.logger.Warn("Deletion event channel full, skipping event",
-				zap.String("objectKey", objectKey.String()))
+			w.logger.Warn("Deletion event channel full, skipping event", zap.Any("objectKey", objectKey))
 		}
 	}
 }
@@ -155,56 +152,54 @@ func (w *Worker) consumer(ctx context.Context, workerID int) {
 func (w *Worker) processDeletionEvent(ctx context.Context, event DeletionEvent, workerID int) {
 	w.logger.Debug("Processing deletion event",
 		zap.Int("workerID", workerID),
-		zap.String("objectKey", event.ObjectKey.String()))
+		zap.Any("objectKey", event.ObjectKey))
 
 	resource, err := w.repo.Get(ctx, event.ObjectKey)
 	if err != nil {
 		w.logger.Error("Failed to get resource for deletion",
-			zap.String("objectKey", event.ObjectKey.String()),
+			zap.Any("objectKey", event.ObjectKey),
 			zap.Error(err))
 		return
 	}
 
 	if resource == nil {
 		w.logger.Debug("Resource not found, skipping deletion",
-			zap.String("objectKey", event.ObjectKey.String()))
+			zap.Any("objectKey", event.ObjectKey))
 		return
 	}
 
 	shouldSkip, err := w.shouldSkipDeletion(ctx, resource)
 	if err != nil {
 		w.logger.Error("Failed to check whether deletion should be skipped",
-			zap.String("objectKey", event.ObjectKey.String()),
+			zap.Any("objectKey", event.ObjectKey),
 			zap.Error(err))
 		return
 	}
 
 	if shouldSkip {
-		w.logger.Debug("Skipping deletion", zap.String("objectKey", event.ObjectKey.String()))
+		w.logger.Debug("Skipping deletion", zap.Any("objectKey", event.ObjectKey))
 		return
 	}
 
 	err = w.repo.Delete(ctx, event.ObjectKey)
 	if err != nil {
-		w.logger.Error("Failed to delete resource",
-			zap.String("objectKey", event.ObjectKey.String()),
-			zap.Error(err))
+		w.logger.Error("Failed to delete resource", zap.Any("objectKey", event.ObjectKey), zap.Error(err))
 		return
 	}
 
-	w.logger.Info("Successfully deleted resource", zap.String("objectKey", event.ObjectKey.String()))
+	w.logger.Info("Successfully deleted resource", zap.Any("objectKey", event.ObjectKey))
 }
 
 // shouldSkipDeletion checks if deletion should be skipped due to blocking owner references
-func (w *Worker) shouldSkipDeletion(ctx context.Context, resource *unstructured.Unstructured) (bool, error) {
-	if resource.GetFinalizers() != nil && len(resource.GetFinalizers()) > 0 {
-		return true, nil // resource has finalizers, skipping deletion
+func (w *Worker) shouldSkipDeletion(ctx context.Context, resource *sdkmeta.Object) (bool, error) {
+	if len(resource.ObjectMeta.Finalizers) > 0 {
+		return true, nil
 	}
 
-	ownerRefs := resource.GetOwnerReferences()
+	ownerRefs := resource.ObjectMeta.OwnerReferences
 	for _, ownerRef := range ownerRefs {
-		if ownerRef.BlockOwnerDeletion != nil && *ownerRef.BlockOwnerDeletion {
-			parentKey := types.OwnerRefToObjectKey(ownerRef, resource.GetNamespace())
+		if ownerRef.BlockOwnerDeletion {
+			parentKey := repository.OwnerRefToObjectKey(ownerRef, resource.ObjectKey.Namespace)
 			parent, err := w.repo.Get(ctx, parentKey)
 			if err != nil {
 				return false, err

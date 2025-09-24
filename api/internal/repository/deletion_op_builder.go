@@ -9,12 +9,10 @@ import (
 	"github.com/pkg/errors"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	metaTypes "k8s.io/apimachinery/pkg/types"
 
 	internalerrors "github.com/tsamsiyu/themelio/api/internal/errors"
 	"github.com/tsamsiyu/themelio/api/internal/repository/types"
+	sdkmeta "github.com/tsamsiyu/themelio/sdk/pkg/types/meta"
 )
 
 type DeletionOpBuilder struct {
@@ -31,10 +29,8 @@ func NewDeletionOpBuilder(store ResourceStore, clientWrapper ClientWrapper, logg
 	}
 }
 
-func (b *DeletionOpBuilder) BuildMarkDeletionOperation(
-	key types.ObjectKey,
-) (*clientv3.Op, error) {
-	deletionKey := fmt.Sprintf("/deletion%s", key.String())
+func (b *DeletionOpBuilder) BuildMarkDeletionOperation(key sdkmeta.ObjectKey) (*clientv3.Op, error) {
+	deletionKey := deletionDbKey(key)
 	deletionRecord := types.NewDeletionRecord(key)
 	deletionData, err := json.Marshal(deletionRecord)
 	if err != nil {
@@ -48,18 +44,18 @@ func (b *DeletionOpBuilder) BuildMarkDeletionOperation(
 
 // BuildChildrenCleanupOperations builds all operations needed to clean up children of a resource
 func (b *DeletionOpBuilder) BuildChildrenCleanupOperations(
-	resource *unstructured.Unstructured,
-	childResources map[string]*unstructured.Unstructured,
+	obj *sdkmeta.Object,
+	children []*sdkmeta.Object,
 ) ([]clientv3.Op, error) {
 	var allOps []clientv3.Op
 
-	refCleanupOps, err := b.buildChildrenReferenceCleanupOps(resource, childResources)
+	refCleanupOps, err := b.buildChildrenReferenceCleanupOps(obj, children)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to build children reference cleanup operations")
 	}
 	allOps = append(allOps, refCleanupOps...)
 
-	markDeletionOps, err := b.buildChildrenMarkDeletionOps(resource, childResources)
+	markDeletionOps, err := b.buildChildrenMarkDeletionOps(obj, children)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to build children mark deletion operations")
 	}
@@ -70,25 +66,19 @@ func (b *DeletionOpBuilder) BuildChildrenCleanupOperations(
 
 // buildChildrenReferenceCleanupOps builds operations to remove owner references from children
 func (b *DeletionOpBuilder) buildChildrenReferenceCleanupOps(
-	resource *unstructured.Unstructured,
-	childResources map[string]*unstructured.Unstructured,
+	obj *sdkmeta.Object,
+	children []*sdkmeta.Object,
 ) ([]clientv3.Op, error) {
 	var ops []clientv3.Op
 
-	for childKeyStr, child := range childResources {
-		childKey, err := types.ParseObjectKey(childKeyStr)
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to parse child key")
-		}
-
-		childOwnerRefs := child.GetOwnerReferences()
-		hasBlockingParent := hasOtherBlockingReference(childOwnerRefs, resource.GetUID())
+	for _, child := range children {
+		hasBlockingParent := hasOtherBlockingReference(child.ObjectMeta.OwnerReferences, obj.SystemMeta.UID)
 
 		if hasBlockingParent {
-			newOwnerRefs := removeOwnerReference(childOwnerRefs, resource.GetUID())
-			child.SetOwnerReferences(newOwnerRefs)
+			newOwnerRefs := removeOwnerReference(child.ObjectMeta.OwnerReferences, obj.SystemMeta.UID)
+			child.ObjectMeta.OwnerReferences = newOwnerRefs
 
-			setOp, err := b.store.BuildPutTxOp(childKey, child)
+			setOp, err := b.store.BuildPutTxOp(child)
 			if err != nil {
 				return nil, errors.Wrap(err, "failed to build set operation for updated child resource")
 			}
@@ -101,22 +91,15 @@ func (b *DeletionOpBuilder) buildChildrenReferenceCleanupOps(
 
 // buildChildrenMarkDeletionOps builds operations to mark children for deletion
 func (b *DeletionOpBuilder) buildChildrenMarkDeletionOps(
-	resource *unstructured.Unstructured,
-	childResources map[string]*unstructured.Unstructured,
+	obj *sdkmeta.Object,
+	children []*sdkmeta.Object,
 ) ([]clientv3.Op, error) {
 	var ops []clientv3.Op
 
-	for childKeyStr, child := range childResources {
-		childKey, err := types.ParseObjectKey(childKeyStr)
-		if err != nil {
-			continue
-		}
-
-		childOwnerRefs := child.GetOwnerReferences()
-		hasBlockingParent := hasOtherBlockingReference(childOwnerRefs, resource.GetUID())
-
+	for _, child := range children {
+		hasBlockingParent := hasOtherBlockingReference(child.ObjectMeta.OwnerReferences, obj.SystemMeta.UID)
 		if !hasBlockingParent {
-			deletionOp, err := b.BuildMarkDeletionOperation(childKey)
+			deletionOp, err := b.BuildMarkDeletionOperation(*child.ObjectKey)
 			if err != nil {
 				return nil, errors.Wrap(err, "failed to build mark deletion operation for child")
 			}
@@ -160,16 +143,16 @@ func (b *DeletionOpBuilder) AcquireDeletions(ctx context.Context, lockKey string
 
 	if len(deletionRecords) == 0 {
 		b.clientWrapper.RevokeLease(ctx, leaseResp.ID)
-		return &types.DeletionBatch{ObjectKeys: []types.ObjectKey{}, LeaseID: leaseResp.ID}, nil
+		return &types.DeletionBatch{ObjectKeys: []sdkmeta.ObjectKey{}, LeaseID: leaseResp.ID}, nil
 	}
 
-	var objectKeys []types.ObjectKey
+	var objectKeys []sdkmeta.ObjectKey
 
 	for _, deletionRecord := range deletionRecords {
 		var txnResp *clientv3.TxnResponse
 		var err error
 
-		objectLockPath := fmt.Sprintf("/locks/deletion/%s", deletionRecord.ObjectKey.String())
+		objectLockPath := fmt.Sprintf("/locks/deletion/%s", objectKeyToDbKey(deletionRecord.ObjectKey))
 
 		noLockCompareOp := []clientv3.Cmp{clientv3.Compare(clientv3.Version(objectLockPath), "=", 0)}
 		leaseOp := []clientv3.Op{clientv3.OpPut(objectLockPath, lockKey, clientv3.WithLease(leaseResp.ID))}
@@ -191,8 +174,8 @@ func (b *DeletionOpBuilder) AcquireDeletions(ctx context.Context, lockKey string
 	return &types.DeletionBatch{ObjectKeys: objectKeys, LeaseID: leaseResp.ID}, nil
 }
 
-func removeOwnerReference(ownerRefs []metav1.OwnerReference, exceptID metaTypes.UID) []metav1.OwnerReference {
-	var newOwnerRefs []metav1.OwnerReference
+func removeOwnerReference(ownerRefs []sdkmeta.OwnerReference, exceptID string) []sdkmeta.OwnerReference {
+	var newOwnerRefs []sdkmeta.OwnerReference
 	for _, ownerRef := range ownerRefs {
 		if ownerRef.UID == exceptID {
 			continue
@@ -203,12 +186,12 @@ func removeOwnerReference(ownerRefs []metav1.OwnerReference, exceptID metaTypes.
 	return newOwnerRefs
 }
 
-func hasOtherBlockingReference(childOwnerRefs []metav1.OwnerReference, exceptID metaTypes.UID) bool {
+func hasOtherBlockingReference(childOwnerRefs []sdkmeta.OwnerReference, exceptID string) bool {
 	for _, ownerRef := range childOwnerRefs {
 		if ownerRef.UID == exceptID {
 			continue
 		}
-		if ownerRef.BlockOwnerDeletion != nil && *ownerRef.BlockOwnerDeletion {
+		if ownerRef.BlockOwnerDeletion {
 			return true
 		}
 	}

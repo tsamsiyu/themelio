@@ -7,11 +7,10 @@ import (
 	jsonpatch "github.com/evanphx/json-patch/v5"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	"github.com/tsamsiyu/themelio/api/internal/repository/types"
 	"github.com/tsamsiyu/themelio/api/mocks"
-	themeliotypes "github.com/tsamsiyu/themelio/sdk/pkg/types/crd"
+	sdkmeta "github.com/tsamsiyu/themelio/sdk/pkg/types/meta"
+	sdkschema "github.com/tsamsiyu/themelio/sdk/pkg/types/schema"
 )
 
 func TestValidatePatchOperations(t *testing.T) {
@@ -56,30 +55,62 @@ func TestPatchResource_InvalidPatch(t *testing.T) {
 		Name:      "test-resource",
 	}
 
-	existingResource := &unstructured.Unstructured{
-		Object: map[string]interface{}{
-			"apiVersion": "example.com/v1",
-			"kind":       "TestResource",
-			"metadata": map[string]interface{}{
-				"name":      "test-resource",
-				"namespace": "default",
+	existingResource := &sdkmeta.Object{
+		ObjectKey: &sdkmeta.ObjectKey{
+			ObjectType: sdkmeta.ObjectType{
+				Group:     "example.com",
+				Version:   "v1",
+				Kind:      "TestResource",
+				Namespace: "default",
 			},
-			"spec": map[string]interface{}{
-				"replicas": 1,
-			},
+			Name: "test-resource",
+		},
+		ObjectMeta: &sdkmeta.ObjectMeta{
+			Labels:      map[string]string{},
+			Annotations: map[string]string{},
+		},
+		SystemMeta: &sdkmeta.SystemMeta{
+			UID: "test-uid",
+		},
+		Spec: map[string]interface{}{
+			"replicas": 1,
 		},
 	}
 
-	crd := &themeliotypes.CustomResourceDefinition{
-		Spec: themeliotypes.CustomResourceDefinitionSpec{
-			Group: "example.com",
-			Kind:  "TestResource",
-			Scope: themeliotypes.ResourceScopeNamespaced,
+	schema := &sdkschema.ObjectSchema{
+		Group: "example.com",
+		Kind:  "TestResource",
+		Scope: sdkschema.ResourceScopeNamespaced,
+		Versions: []sdkschema.ObjectSchemaVersion{
+			{
+				Name: "v1",
+				Schema: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"spec": map[string]interface{}{
+							"type": "object",
+							"properties": map[string]interface{}{
+								"replicas": map[string]interface{}{
+									"type": "integer",
+								},
+							},
+						},
+					},
+				},
+			},
 		},
 	}
-	mockSchema.EXPECT().Get(ctx, "example.com", "TestResource").Return(crd, nil)
+	mockSchema.EXPECT().Get(ctx, "example.com", "TestResource").Return(schema, nil)
 
-	objectKey := types.NewNamespacedObjectKey("example.com", "v1", "TestResource", "default", "test-resource")
+	objectKey := sdkmeta.ObjectKey{
+		ObjectType: sdkmeta.ObjectType{
+			Group:     "example.com",
+			Version:   "v1",
+			Kind:      "TestResource",
+			Namespace: "default",
+		},
+		Name: "test-resource",
+	}
 	mockRepo.EXPECT().Get(ctx, objectKey).Return(existingResource, nil)
 
 	invalidPatchData := []byte(`[

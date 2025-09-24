@@ -10,6 +10,7 @@ import (
 
 	"github.com/tsamsiyu/themelio/api/internal/lib"
 	"github.com/tsamsiyu/themelio/api/internal/repository/types"
+	sdkmeta "github.com/tsamsiyu/themelio/sdk/pkg/types/meta"
 )
 
 type WatchConfig struct {
@@ -17,7 +18,7 @@ type WatchConfig struct {
 }
 
 type WatchHandler struct {
-	key          types.ResourceKey
+	objType      *sdkmeta.ObjectType
 	store        ResourceStore
 	logger       *zap.Logger
 	config       WatchConfig
@@ -30,14 +31,14 @@ type WatchHandler struct {
 }
 
 func NewWatchHandler(
-	key types.ResourceKey,
+	objType *sdkmeta.ObjectType,
 	store ResourceStore,
 	logger *zap.Logger,
 	config WatchConfig,
 	backoff *lib.BackoffManager,
 ) *WatchHandler {
 	return &WatchHandler{
-		key:     key,
+		objType: objType,
 		store:   store,
 		logger:  logger,
 		config:  config,
@@ -112,7 +113,7 @@ func (h *WatchHandler) watchLoop(ctx context.Context) {
 
 		// TODO: restart watcher with last revision if last error was not etcd's CompactedErr error
 		// TODO: if last error was CompactedErr or if start of watcher with a specified revision causes CompactedErr we have to call reconciler process
-		go h.store.Watch(watchCtx, h.key, watchChan)
+		go h.store.Watch(watchCtx, h.objType, watchChan)
 
 		watchErr := h.processWatchEvents(watchCtx, watchChan)
 
@@ -124,7 +125,7 @@ func (h *WatchHandler) watchLoop(ctx context.Context) {
 
 		if h.retryCount >= h.config.MaxRetries {
 			h.logger.Error("Max retries exceeded, stopping watcher",
-				zap.String("key", h.key.ToKey()),
+				zap.String("key", objectTypeToDbKey(h.objType)),
 				zap.Int("retryCount", h.retryCount))
 			return // todo: return specific error to notify caller
 		}
@@ -133,7 +134,7 @@ func (h *WatchHandler) watchLoop(ctx context.Context) {
 		backoffDuration := h.backoff.NextBackoff()
 
 		h.logger.Warn("Watch error, retrying",
-			zap.String("key", h.key.ToKey()),
+			zap.String("key", objectTypeToDbKey(h.objType)),
 			zap.Error(watchErr),
 			zap.Int("retryCount", h.retryCount),
 			zap.Duration("backoff", backoffDuration))
@@ -170,7 +171,7 @@ func (h *WatchHandler) processWatchEvents(ctx context.Context, watchChan <-chan 
 }
 
 func (h *WatchHandler) reconcile(ctx context.Context) error {
-	resources, err := h.store.List(ctx, h.key, 0)
+	resources, err := h.store.List(ctx, h.objType, 0)
 	if err != nil {
 		return err
 	}
