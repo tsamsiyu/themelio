@@ -2,7 +2,6 @@ package repository
 
 import (
 	"context"
-	"sync"
 	"time"
 
 	"github.com/pkg/errors"
@@ -20,9 +19,7 @@ type WatchHandler struct {
 	Logger       *zap.Logger
 	config       types.WatchConfig
 	backoff      *lib.BackoffManager
-	eventChan    chan<- types.WatchEvent
-	clients      []chan<- types.WatchEvent
-	clientsMutex sync.RWMutex
+	eventChan    chan types.WatchEvent
 	LastRevision int64
 	retryCount   int
 	Cache        map[sdkmeta.ObjectKey]types.WatchCacheEntry
@@ -36,62 +33,29 @@ func NewWatchHandler(
 	backoff *lib.BackoffManager,
 ) *WatchHandler {
 	return &WatchHandler{
-		ObjType: objType,
-		Store:   store,
-		Logger:  logger,
-		config:  config,
-		backoff: backoff,
-		Cache:   make(map[sdkmeta.ObjectKey]types.WatchCacheEntry),
+		ObjType:   objType,
+		Store:     store,
+		Logger:    logger,
+		config:    config,
+		backoff:   backoff,
+		eventChan: make(chan types.WatchEvent, 100),
+		Cache:     make(map[sdkmeta.ObjectKey]types.WatchCacheEntry),
 	}
 }
 
-func (h *WatchHandler) Start(ctx context.Context, eventChan chan<- types.WatchEvent) {
-	h.eventChan = eventChan
-	h.AddClient(eventChan)
+func (h *WatchHandler) Start(ctx context.Context) {
 	go h.watchLoop(ctx)
 }
 
-func (h *WatchHandler) AddClient(clientChan chan<- types.WatchEvent) {
-	h.clientsMutex.Lock()
-	defer h.clientsMutex.Unlock()
-	h.clients = append(h.clients, clientChan)
+func (h *WatchHandler) EventChannel() <-chan types.WatchEvent {
+	return h.eventChan
 }
 
-func (h *WatchHandler) RemoveClient(clientChan chan<- types.WatchEvent) {
-	h.clientsMutex.Lock()
-	defer h.clientsMutex.Unlock()
-	for i, client := range h.clients {
-		if client == clientChan {
-			h.clients = append(h.clients[:i], h.clients[i+1:]...)
-			break
-		}
-	}
-}
-
-func (h *WatchHandler) GetClientCount() int {
-	h.clientsMutex.RLock()
-	defer h.clientsMutex.RUnlock()
-	return len(h.clients)
-}
-
-func (h *WatchHandler) copyClients() []chan<- types.WatchEvent {
-	h.clientsMutex.RLock()
-	defer h.clientsMutex.RUnlock()
-
-	clients := make([]chan<- types.WatchEvent, len(h.clients))
-	copy(clients, h.clients)
-	return clients
-}
-
-func (h *WatchHandler) BroadcastEvent(ctx context.Context, event types.WatchEvent) {
-	clients := h.copyClients()
-
-	for _, client := range clients {
-		select {
-		case client <- event:
-		case <-ctx.Done():
-			return
-		}
+func (h *WatchHandler) SendEvent(ctx context.Context, event types.WatchEvent) {
+	select {
+	case h.eventChan <- event:
+	case <-ctx.Done():
+		return
 	}
 }
 
@@ -196,7 +160,7 @@ func (h *WatchHandler) ProcessWatchEvents(ctx context.Context, watchChan <-chan 
 			}
 
 			h.LastRevision = event.Revision
-			h.BroadcastEvent(ctx, event)
+			h.SendEvent(ctx, event)
 		}
 	}
 }
@@ -232,7 +196,7 @@ func (h *WatchHandler) Reconcile(ctx context.Context) error {
 					Timestamp: time.Now(),
 					Revision:  batch.Revision,
 				}
-				h.BroadcastEvent(ctx, event)
+				h.SendEvent(ctx, event)
 			} else {
 				if cachedEntry.CreateRevision != obj.SystemMeta.CreateRevision {
 					deletedEvent := types.WatchEvent{
@@ -242,7 +206,7 @@ func (h *WatchHandler) Reconcile(ctx context.Context) error {
 						Timestamp: time.Now(),
 						Revision:  batch.Revision,
 					}
-					h.BroadcastEvent(ctx, deletedEvent)
+					h.SendEvent(ctx, deletedEvent)
 
 					addedEvent := types.WatchEvent{
 						Type:      types.WatchEventTypeAdded,
@@ -251,7 +215,7 @@ func (h *WatchHandler) Reconcile(ctx context.Context) error {
 						Timestamp: time.Now(),
 						Revision:  batch.Revision,
 					}
-					h.BroadcastEvent(ctx, addedEvent)
+					h.SendEvent(ctx, addedEvent)
 				} else if cachedEntry.ModRevision != obj.SystemMeta.ModRevision {
 					event := types.WatchEvent{
 						Type:      types.WatchEventTypeModified,
@@ -260,7 +224,7 @@ func (h *WatchHandler) Reconcile(ctx context.Context) error {
 						Timestamp: time.Now(),
 						Revision:  batch.Revision,
 					}
-					h.BroadcastEvent(ctx, event)
+					h.SendEvent(ctx, event)
 				}
 			}
 
@@ -298,7 +262,7 @@ func (h *WatchHandler) Reconcile(ctx context.Context) error {
 			Timestamp: time.Now(),
 			Revision:  h.LastRevision,
 		}
-		h.BroadcastEvent(ctx, deletedEvent)
+		h.SendEvent(ctx, deletedEvent)
 	}
 
 	return nil

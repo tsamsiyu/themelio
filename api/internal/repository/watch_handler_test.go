@@ -16,86 +16,9 @@ import (
 	sdkmeta "github.com/tsamsiyu/themelio/sdk/pkg/types/meta"
 )
 
-func TestWatchHandler_AddClient(t *testing.T) {
-	handler := createTestWatchHandler(t)
-	clientChan1 := make(chan types.WatchEvent, 1)
-	clientChan2 := make(chan types.WatchEvent, 1)
-
-	handler.AddClient(clientChan1)
-	assert.Equal(t, 1, handler.GetClientCount())
-
-	handler.AddClient(clientChan2)
-	assert.Equal(t, 2, handler.GetClientCount())
-}
-
-func TestWatchHandler_RemoveClient(t *testing.T) {
-	handler := createTestWatchHandler(t)
-	clientChan1 := make(chan types.WatchEvent, 1)
-	clientChan2 := make(chan types.WatchEvent, 1)
-
-	handler.AddClient(clientChan1)
-	handler.AddClient(clientChan2)
-	assert.Equal(t, 2, handler.GetClientCount())
-
-	handler.RemoveClient(clientChan1)
-	assert.Equal(t, 1, handler.GetClientCount())
-
-	handler.RemoveClient(clientChan2)
-	assert.Equal(t, 0, handler.GetClientCount())
-}
-
-func TestWatchHandler_RemoveClient_NonExistent(t *testing.T) {
-	handler := createTestWatchHandler(t)
-	clientChan1 := make(chan types.WatchEvent, 1)
-	clientChan2 := make(chan types.WatchEvent, 1)
-
-	handler.AddClient(clientChan1)
-	assert.Equal(t, 1, handler.GetClientCount())
-
-	handler.RemoveClient(clientChan2)
-	assert.Equal(t, 1, handler.GetClientCount())
-}
-
-func TestWatchHandler_broadcastEvent(t *testing.T) {
-	handler := createTestWatchHandler(t)
-	clientChan1 := make(chan types.WatchEvent, 1)
-	clientChan2 := make(chan types.WatchEvent, 1)
-
-	handler.AddClient(clientChan1)
-	handler.AddClient(clientChan2)
-
-	event := types.WatchEvent{
-		Type:      types.WatchEventTypeAdded,
-		Object:    createTestObject(t),
-		Timestamp: time.Now(),
-		Revision:  123,
-	}
-
-	ctx := context.Background()
-	handler.BroadcastEvent(ctx, event)
-
-	select {
-	case receivedEvent := <-clientChan1:
-		assert.Equal(t, event.Type, receivedEvent.Type)
-		assert.Equal(t, event.Revision, receivedEvent.Revision)
-	case <-time.After(time.Second):
-		t.Fatal("Client 1 did not receive event")
-	}
-
-	select {
-	case receivedEvent := <-clientChan2:
-		assert.Equal(t, event.Type, receivedEvent.Type)
-		assert.Equal(t, event.Revision, receivedEvent.Revision)
-	case <-time.After(time.Second):
-		t.Fatal("Client 2 did not receive event")
-	}
-}
-
 func TestWatchHandler_processWatchEvents_Added(t *testing.T) {
-	handler := createTestWatchHandler(t)
+	handler, eventChan := createTestWatchHandler(t)
 	watchChan := make(chan types.WatchEvent, 1)
-	clientChan := make(chan types.WatchEvent, 1)
-	handler.AddClient(clientChan)
 
 	obj := createTestObject(t)
 	event := types.WatchEvent{
@@ -123,20 +46,19 @@ func TestWatchHandler_processWatchEvents_Added(t *testing.T) {
 	assert.Equal(t, obj.SystemMeta.ModRevision, cachedEntry.ModRevision)
 	assert.Equal(t, obj.SystemMeta.CreateRevision, cachedEntry.CreateRevision)
 
+	// Verify that the event was sent to the handler's internal channel
 	select {
-	case receivedEvent := <-clientChan:
+	case receivedEvent := <-eventChan:
 		assert.Equal(t, types.WatchEventTypeAdded, receivedEvent.Type)
 		assert.Equal(t, obj, receivedEvent.Object)
 	case <-time.After(time.Second):
-		t.Fatal("Client did not receive event")
+		t.Fatal("Handler did not send event to internal channel")
 	}
 }
 
 func TestWatchHandler_processWatchEvents_Modified(t *testing.T) {
-	handler := createTestWatchHandler(t)
+	handler, eventChan := createTestWatchHandler(t)
 	watchChan := make(chan types.WatchEvent, 1)
-	clientChan := make(chan types.WatchEvent, 1)
-	handler.AddClient(clientChan)
 
 	obj := createTestObject(t)
 	event := types.WatchEvent{
@@ -163,18 +85,16 @@ func TestWatchHandler_processWatchEvents_Modified(t *testing.T) {
 	assert.Equal(t, obj.SystemMeta.Version, cachedEntry.Version)
 
 	select {
-	case receivedEvent := <-clientChan:
+	case receivedEvent := <-eventChan:
 		assert.Equal(t, types.WatchEventTypeModified, receivedEvent.Type)
 	case <-time.After(time.Second):
-		t.Fatal("Client did not receive event")
+		t.Fatal("Handler did not send event to internal channel")
 	}
 }
 
 func TestWatchHandler_processWatchEvents_Deleted(t *testing.T) {
-	handler := createTestWatchHandler(t)
+	handler, eventChan := createTestWatchHandler(t)
 	watchChan := make(chan types.WatchEvent, 1)
-	clientChan := make(chan types.WatchEvent, 1)
-	handler.AddClient(clientChan)
 
 	obj := createTestObject(t)
 	key := *obj.ObjectKey
@@ -207,18 +127,16 @@ func TestWatchHandler_processWatchEvents_Deleted(t *testing.T) {
 	assert.False(t, exists)
 
 	select {
-	case receivedEvent := <-clientChan:
+	case receivedEvent := <-eventChan:
 		assert.Equal(t, types.WatchEventTypeDeleted, receivedEvent.Type)
 	case <-time.After(time.Second):
-		t.Fatal("Client did not receive event")
+		t.Fatal("Handler did not send event to internal channel")
 	}
 }
 
 func TestWatchHandler_processWatchEvents_Error(t *testing.T) {
-	handler := createTestWatchHandler(t)
+	handler, _ := createTestWatchHandler(t)
 	watchChan := make(chan types.WatchEvent, 1)
-	clientChan := make(chan types.WatchEvent, 1)
-	handler.AddClient(clientChan)
 
 	testError := errors.New("test error")
 	event := types.WatchEvent{
@@ -241,7 +159,7 @@ func TestWatchHandler_processWatchEvents_Error(t *testing.T) {
 }
 
 func TestWatchHandler_processWatchEvents_ContextCanceled(t *testing.T) {
-	handler := createTestWatchHandler(t)
+	handler, _ := createTestWatchHandler(t)
 	watchChan := make(chan types.WatchEvent, 1)
 
 	event := types.WatchEvent{
@@ -263,7 +181,7 @@ func TestWatchHandler_processWatchEvents_ContextCanceled(t *testing.T) {
 }
 
 func TestWatchHandler_processWatchEvents_ChannelClosed(t *testing.T) {
-	handler := createTestWatchHandler(t)
+	handler, _ := createTestWatchHandler(t)
 	watchChan := make(chan types.WatchEvent, 1)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -277,9 +195,7 @@ func TestWatchHandler_processWatchEvents_ChannelClosed(t *testing.T) {
 }
 
 func TestWatchHandler_reconcile_NewResource(t *testing.T) {
-	handler := createTestWatchHandler(t)
-	clientChan := make(chan types.WatchEvent, 1)
-	handler.AddClient(clientChan)
+	handler, eventChan := createTestWatchHandler(t)
 
 	obj := createTestObject(t)
 	batch := &types.ObjectBatch{
@@ -303,18 +219,16 @@ func TestWatchHandler_reconcile_NewResource(t *testing.T) {
 	assert.Equal(t, obj.SystemMeta.Version, cachedEntry.Version)
 
 	select {
-	case receivedEvent := <-clientChan:
+	case receivedEvent := <-eventChan:
 		assert.Equal(t, types.WatchEventTypeAdded, receivedEvent.Type)
 		assert.Equal(t, obj, receivedEvent.Object)
 	case <-time.After(time.Second):
-		t.Fatal("Client did not receive event")
+		t.Fatal("Handler did not send event to internal channel")
 	}
 }
 
 func TestWatchHandler_reconcile_ModifiedResource(t *testing.T) {
-	handler := createTestWatchHandler(t)
-	clientChan := make(chan types.WatchEvent, 1)
-	handler.AddClient(clientChan)
+	handler, eventChan := createTestWatchHandler(t)
 
 	obj := createTestObject(t)
 	obj.SystemMeta.ModRevision = 102 // Different from cache
@@ -341,18 +255,16 @@ func TestWatchHandler_reconcile_ModifiedResource(t *testing.T) {
 	assert.NoError(t, err)
 
 	select {
-	case receivedEvent := <-clientChan:
+	case receivedEvent := <-eventChan:
 		assert.Equal(t, types.WatchEventTypeModified, receivedEvent.Type)
 		assert.Equal(t, obj, receivedEvent.Object)
 	case <-time.After(time.Second):
-		t.Fatal("Client did not receive event")
+		t.Fatal("Handler did not send event to internal channel")
 	}
 }
 
 func TestWatchHandler_reconcile_DeletedResource(t *testing.T) {
-	handler := createTestWatchHandler(t)
-	clientChan := make(chan types.WatchEvent, 1)
-	handler.AddClient(clientChan)
+	handler, eventChan := createTestWatchHandler(t)
 
 	obj := createTestObject(t)
 	key := *obj.ObjectKey
@@ -381,18 +293,16 @@ func TestWatchHandler_reconcile_DeletedResource(t *testing.T) {
 	assert.False(t, exists)
 
 	select {
-	case receivedEvent := <-clientChan:
+	case receivedEvent := <-eventChan:
 		assert.Equal(t, types.WatchEventTypeDeleted, receivedEvent.Type)
 		assert.Equal(t, key, receivedEvent.ObjectKey)
 	case <-time.After(time.Second):
-		t.Fatal("Client did not receive event")
+		t.Fatal("Handler did not send event to internal channel")
 	}
 }
 
 func TestWatchHandler_reconcile_RecreatedResource(t *testing.T) {
-	handler := createTestWatchHandler(t)
-	clientChan := make(chan types.WatchEvent, 2)
-	handler.AddClient(clientChan)
+	handler, eventChan := createTestWatchHandler(t)
 
 	obj := createTestObject(t)
 	key := *obj.ObjectKey
@@ -422,7 +332,7 @@ func TestWatchHandler_reconcile_RecreatedResource(t *testing.T) {
 	events := make([]types.WatchEvent, 0, 2)
 	for i := 0; i < 2; i++ {
 		select {
-		case receivedEvent := <-clientChan:
+		case receivedEvent := <-eventChan:
 			events = append(events, receivedEvent)
 		case <-time.After(time.Second):
 			t.Fatal("Client did not receive expected events")
@@ -436,7 +346,7 @@ func TestWatchHandler_reconcile_RecreatedResource(t *testing.T) {
 }
 
 func TestWatchHandler_reconcile_ListError(t *testing.T) {
-	handler := createTestWatchHandler(t)
+	handler, _ := createTestWatchHandler(t)
 
 	testError := errors.New("list error")
 	mockStore := handler.Store.(*mocks.MockResourceStore)
@@ -451,10 +361,8 @@ func TestWatchHandler_reconcile_ListError(t *testing.T) {
 }
 
 func TestWatchHandler_reconcile_BatchProcessing(t *testing.T) {
-	handler := createTestWatchHandler(t)
+	handler, eventChan := createTestWatchHandler(t)
 	handler.config.ReconcileBatchSize = 1
-	clientChan := make(chan types.WatchEvent, 3)
-	handler.AddClient(clientChan)
 
 	obj1 := createTestObject(t)
 	obj1.ObjectKey.Name = "resource-1"
@@ -483,15 +391,15 @@ func TestWatchHandler_reconcile_BatchProcessing(t *testing.T) {
 	assert.NoError(t, err)
 
 	select {
-	case receivedEvent := <-clientChan:
+	case receivedEvent := <-eventChan:
 		assert.Equal(t, types.WatchEventTypeAdded, receivedEvent.Type)
 		assert.Equal(t, obj1, receivedEvent.Object)
 	case <-time.After(time.Second):
-		t.Fatal("Client did not receive event")
+		t.Fatal("Handler did not send event to internal channel")
 	}
 }
 
-func createTestWatchHandler(t *testing.T) *WatchHandler {
+func createTestWatchHandler(t *testing.T) (*WatchHandler, <-chan types.WatchEvent) {
 	objType := &sdkmeta.ObjectType{
 		Group:     "example.com",
 		Version:   "v1",
@@ -511,7 +419,8 @@ func createTestWatchHandler(t *testing.T) *WatchHandler {
 		ResetAfter:        time.Hour,
 	})
 
-	return NewWatchHandler(objType, store, logger, config, backoff)
+	handler := NewWatchHandler(objType, store, logger, config, backoff)
+	return handler, handler.EventChannel()
 }
 
 func createTestObject(t *testing.T) *sdkmeta.Object {
