@@ -26,8 +26,7 @@ themelio/
 │   │   ├── app/
 │   │   ├── controller/
 │   │   └── etcd/
-│   ├── pkg/
-│   │   └── config/
+│   ├── mocks/
 │   ├── go.mod
 │   └── README.md
 ├── aws/

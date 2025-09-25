@@ -70,11 +70,11 @@ func (s *resourceStore) Put(ctx context.Context, obj *sdkmeta.Object) error {
 
 func (s *resourceStore) Get(ctx context.Context, key sdkmeta.ObjectKey) (*sdkmeta.Object, error) {
 	keyStr := objectKeyToDbKey(key)
-	data, err := s.clientWrapper.Get(ctx, keyStr)
+	kv, err := s.clientWrapper.Get(ctx, keyStr)
 	if err != nil {
 		return nil, err
 	}
-	return s.unmarshalResource(data)
+	return s.unmarshalResource(kv)
 }
 
 func (s *resourceStore) Delete(ctx context.Context, key sdkmeta.ObjectKey) error {
@@ -91,7 +91,7 @@ func (s *resourceStore) List(ctx context.Context, objType *sdkmeta.ObjectType, l
 
 	var resources []*sdkmeta.Object
 	for _, kv := range kvs {
-		resource, err := s.unmarshalResource(kv.Value)
+		resource, err := s.unmarshalResource(&kv)
 		if err != nil {
 			return nil, err
 		}
@@ -212,7 +212,8 @@ func (s *resourceStore) convertEtcdEventToWatchEvent(ev *clientv3.Event, revisio
 			event.Type = WatchEventTypeModified
 		}
 
-		resource, err := s.unmarshalResource(ev.Kv.Value)
+		kv := convertClientKV(ev.Kv)
+		resource, err := s.unmarshalResource(&kv)
 		if err != nil {
 			return event, errors.Wrap(err, "failed to unmarshal resource from etcd event")
 		}
@@ -222,7 +223,8 @@ func (s *resourceStore) convertEtcdEventToWatchEvent(ev *clientv3.Event, revisio
 		event.Type = WatchEventTypeDeleted
 
 		if ev.PrevKv != nil {
-			resource, err := s.unmarshalResource(ev.PrevKv.Value)
+			kv := convertClientKV(ev.PrevKv)
+			resource, err := s.unmarshalResource(&kv)
 			if err != nil {
 				return event, errors.Wrap(err, "failed to unmarshal deleted resource from etcd event")
 			}
@@ -253,11 +255,14 @@ func (s *resourceStore) convertEtcdEventToWatchEvent(ev *clientv3.Event, revisio
 	return event, nil
 }
 
-func (s *resourceStore) unmarshalResource(data []byte) (*sdkmeta.Object, error) {
+func (s *resourceStore) unmarshalResource(kv *KeyValue) (*sdkmeta.Object, error) {
 	var obj sdkmeta.Object
-	if err := json.Unmarshal(data, &obj); err != nil {
+	if err := json.Unmarshal(kv.Value, &obj); err != nil {
 		return nil, internalerrors.NewMarshalingError("Failed to unmarshal resource")
 	}
+
+	obj.SystemMeta.Version = kv.Version
+	obj.SystemMeta.ModRevision = kv.ModRevision
 
 	return &obj, nil
 }

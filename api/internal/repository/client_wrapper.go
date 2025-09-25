@@ -4,23 +4,24 @@ import (
 	"context"
 
 	"github.com/pkg/errors"
+	"go.etcd.io/etcd/api/v3/mvccpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
 
-// KeyValue represents a key-value pair from etcd
 type KeyValue struct {
-	Key   string
-	Value []byte
+	Key         string
+	Version     int64
+	ModRevision int64
+	Value       []byte
 }
 
-// ClientWrapper provides a thin generic wrapper over etcd client
 type ClientWrapper interface {
 	Client() EtcdClientInterface
 
 	// Basic CRUD operations with raw data
 	Put(ctx context.Context, key string, value string) error
-	Get(ctx context.Context, key string) ([]byte, error)
+	Get(ctx context.Context, key string) (*KeyValue, error)
 	Delete(ctx context.Context, key string) error
 	List(ctx context.Context, prefix string, limit int) ([]KeyValue, error)
 
@@ -63,7 +64,7 @@ func (c *clientWrapper) Put(ctx context.Context, key string, value string) error
 	return err
 }
 
-func (c *clientWrapper) Get(ctx context.Context, key string) ([]byte, error) {
+func (c *clientWrapper) Get(ctx context.Context, key string) (*KeyValue, error) {
 	resp, err := c.client.Get(ctx, key)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get from etcd")
@@ -73,7 +74,9 @@ func (c *clientWrapper) Get(ctx context.Context, key string) ([]byte, error) {
 		return nil, NewNotFoundError(key)
 	}
 
-	return resp.Kvs[0].Value, nil
+	kv := convertClientKV(resp.Kvs[0])
+
+	return &kv, nil
 }
 
 func (c *clientWrapper) Delete(ctx context.Context, key string) error {
@@ -90,15 +93,12 @@ func (c *clientWrapper) List(ctx context.Context, prefix string, limit int) ([]K
 
 	resp, err := c.client.Get(ctx, prefix, opts...)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to list from etcd")
+		return nil, errors.Wrapf(err, "failed to list from etcd with prefix %s", prefix)
 	}
 
 	var kvs []KeyValue
 	for _, kv := range resp.Kvs {
-		kvs = append(kvs, KeyValue{
-			Key:   string(kv.Key),
-			Value: kv.Value,
-		})
+		kvs = append(kvs, convertClientKV(kv))
 	}
 
 	return kvs, nil
@@ -168,4 +168,13 @@ func (c *clientWrapper) KeepAliveLease(ctx context.Context, leaseID clientv3.Lea
 func (c *clientWrapper) Watch(ctx context.Context, prefix string) (<-chan clientv3.WatchResponse, error) {
 	watchChan := c.client.Watch(ctx, prefix, clientv3.WithPrefix())
 	return watchChan, nil
+}
+
+func convertClientKV(kv *mvccpb.KeyValue) KeyValue {
+	return KeyValue{
+		Key:         string(kv.Key),
+		Version:     kv.Version,
+		ModRevision: kv.ModRevision,
+		Value:       kv.Value,
+	}
 }

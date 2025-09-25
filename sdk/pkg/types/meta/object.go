@@ -23,7 +23,8 @@ type ObjectMeta struct {
 
 type SystemMeta struct {
 	UID            string     `json:"uid"`
-	Version        int        `json:"version"`
+	Version        int64      `json:"version"`
+	ModRevision    int64      `json:"modRevision"`
 	CreationTime   *time.Time `json:"creationTime"`
 	LastUpdateTime *time.Time `json:"lastUpdateTime"`
 	DeletionTime   *time.Time `json:"deletionTime"`

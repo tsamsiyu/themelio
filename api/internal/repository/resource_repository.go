@@ -99,7 +99,7 @@ func (r *resourceRepository) Delete(ctx context.Context, key sdkmeta.ObjectKey, 
 		return err
 	}
 
-	ownerReferenceIndexesCleanupOps := r.ownerRefOpBuilder.BuildIndexesCleanupOps(key, obj.ObjectMeta.OwnerReferences)
+	childrenReferencesClenaupOps := r.ownerRefOpBuilder.BuildIndexesCleanupOps(key, obj.ObjectMeta.OwnerReferences)
 
 	childResources, err := r.ownerRefOpBuilder.QueryChildren(ctx, key)
 	if err != nil {
@@ -116,7 +116,7 @@ func (r *resourceRepository) Delete(ctx context.Context, key sdkmeta.ObjectKey, 
 	var ops []clientv3.Op
 	ops = append(ops, clientv3.OpDelete(objectKeyToDbKey(key)))
 	ops = append(ops, clientv3.OpDelete(deletionLockDbKey(key)))
-	ops = append(ops, ownerReferenceIndexesCleanupOps...)
+	ops = append(ops, childrenReferencesClenaupOps...)
 	ops = append(ops, childrenCleanupOps...)
 
 	txn := r.clientWrapper.Client().Txn(ctx)
@@ -177,7 +177,9 @@ func beforeSave(oldResource *sdkmeta.Object, newResource *sdkmeta.Object) {
 	now := time.Now()
 
 	if oldResource == nil {
-		newResource.SystemMeta.CreationTime = &now
+		newResource.SystemMeta = &sdkmeta.SystemMeta{
+			CreationTime: &now,
+		}
 	} else {
 		newResource.SystemMeta.LastUpdateTime = &now
 	}
