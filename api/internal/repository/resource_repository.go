@@ -15,7 +15,7 @@ import (
 type ResourceRepository interface {
 	Replace(ctx context.Context, obj *sdkmeta.Object, optimisticLock bool) error
 	Get(ctx context.Context, key sdkmeta.ObjectKey) (*sdkmeta.Object, error)
-	List(ctx context.Context, objType *sdkmeta.ObjectType, limit int) ([]*sdkmeta.Object, error)
+	List(ctx context.Context, objType *sdkmeta.ObjectType) ([]*sdkmeta.Object, error)
 	Delete(ctx context.Context, key sdkmeta.ObjectKey, lockValue string) error
 	Watch(ctx context.Context, objType *sdkmeta.ObjectType, eventChan chan<- WatchEvent) error
 	MarkDeleted(ctx context.Context, key sdkmeta.ObjectKey) error
@@ -89,8 +89,12 @@ func (r *resourceRepository) Get(ctx context.Context, key sdkmeta.ObjectKey) (*s
 	return r.store.Get(ctx, key)
 }
 
-func (r *resourceRepository) List(ctx context.Context, objType *sdkmeta.ObjectType, limit int) ([]*sdkmeta.Object, error) {
-	return r.store.List(ctx, objType, limit)
+func (r *resourceRepository) List(ctx context.Context, objType *sdkmeta.ObjectType) ([]*sdkmeta.Object, error) {
+	res, err := r.store.List(ctx, objType, nil)
+	if err != nil {
+		return nil, err
+	}
+	return res.Objects, nil
 }
 
 func (r *resourceRepository) Delete(ctx context.Context, key sdkmeta.ObjectKey, lockValue string) error {

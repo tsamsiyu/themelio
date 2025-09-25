@@ -9,11 +9,27 @@ import (
 	"go.uber.org/zap"
 )
 
+type Paging struct {
+	Prefix                string
+	LastKey               string
+	IncludeLastKeyInBatch bool
+	SortDesc              bool
+	Limit                 int
+	Revision              int64
+	MinModRevision        int64
+}
+
+type Batch struct {
+	Revision int64
+	KVs      []KeyValue
+}
+
 type KeyValue struct {
-	Key         string
-	Version     int64
-	ModRevision int64
-	Value       []byte
+	Key            string
+	Version        int64
+	ModRevision    int64
+	CreateRevision int64
+	Value          []byte
 }
 
 type ClientWrapper interface {
@@ -23,7 +39,7 @@ type ClientWrapper interface {
 	Put(ctx context.Context, key string, value string) error
 	Get(ctx context.Context, key string) (*KeyValue, error)
 	Delete(ctx context.Context, key string) error
-	List(ctx context.Context, prefix string, limit int) ([]KeyValue, error)
+	List(ctx context.Context, paging Paging) (*Batch, error)
 
 	// Lease management
 	GrantLease(ctx context.Context, ttl int64) (*clientv3.LeaseGrantResponse, error)
@@ -31,7 +47,7 @@ type ClientWrapper interface {
 	KeepAliveLease(ctx context.Context, leaseID clientv3.LeaseID) (<-chan *clientv3.LeaseKeepAliveResponse, error)
 
 	// Watch operations
-	Watch(ctx context.Context, prefix string) (<-chan clientv3.WatchResponse, error)
+	Watch(ctx context.Context, prefix string, revision ...int64) (<-chan clientv3.WatchResponse, error)
 }
 
 type clientWrapper struct {
@@ -84,24 +100,53 @@ func (c *clientWrapper) Delete(ctx context.Context, key string) error {
 	return err
 }
 
-func (c *clientWrapper) List(ctx context.Context, prefix string, limit int) ([]KeyValue, error) {
-	opts := []clientv3.OpOption{clientv3.WithPrefix()}
+func (c *clientWrapper) List(ctx context.Context, paging Paging) (*Batch, error) {
+	opts := make([]clientv3.OpOption, 0, 5)
 
-	if limit > 0 {
-		opts = append(opts, clientv3.WithLimit(int64(limit)))
+	queryKey := paging.Prefix
+
+	if paging.Limit > 0 {
+		if paging.LastKey != "" {
+			opts = append(opts, clientv3.WithLastKey()...)
+			opts = append(opts, clientv3.WithLimit(int64(paging.Limit+1)))
+			queryKey = paging.LastKey
+		} else {
+			opts = append(opts, clientv3.WithPrefix())
+			opts = append(opts, clientv3.WithLimit(int64(paging.Limit)))
+		}
 	}
 
-	resp, err := c.client.Get(ctx, prefix, opts...)
+	if paging.MinModRevision > 0 {
+		opts = append(opts, clientv3.WithMinModRev(paging.MinModRevision))
+	}
+
+	if paging.SortDesc {
+		opts = append(opts, clientv3.WithSort(clientv3.SortByKey, clientv3.SortDescend))
+	} else {
+		opts = append(opts, clientv3.WithSort(clientv3.SortByKey, clientv3.SortAscend))
+	}
+
+	if queryKey == "" {
+		return nil, errors.New("prefix or last key is required")
+	}
+
+	resp, err := c.client.Get(ctx, queryKey, opts...)
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to list from etcd with prefix %s", prefix)
+		return nil, errors.Wrapf(err, "failed to list from etcd with prefix %s", paging.Prefix)
 	}
 
 	var kvs []KeyValue
-	for _, kv := range resp.Kvs {
+	for i, kv := range resp.Kvs {
+		if i == 0 && !paging.IncludeLastKeyInBatch {
+			continue
+		}
 		kvs = append(kvs, convertClientKV(kv))
 	}
 
-	return kvs, nil
+	return &Batch{
+		Revision: resp.Header.Revision,
+		KVs:      kvs,
+	}, nil
 }
 
 func (c *clientWrapper) ExecuteTransaction(ctx context.Context, ops []clientv3.Op) (*clientv3.TxnResponse, error) {
@@ -165,16 +210,23 @@ func (c *clientWrapper) KeepAliveLease(ctx context.Context, leaseID clientv3.Lea
 	return ch, nil
 }
 
-func (c *clientWrapper) Watch(ctx context.Context, prefix string) (<-chan clientv3.WatchResponse, error) {
-	watchChan := c.client.Watch(ctx, prefix, clientv3.WithPrefix())
+func (c *clientWrapper) Watch(ctx context.Context, prefix string, revision ...int64) (<-chan clientv3.WatchResponse, error) {
+	opts := []clientv3.OpOption{clientv3.WithPrefix()}
+
+	if len(revision) > 0 && revision[0] > 0 {
+		opts = append(opts, clientv3.WithRev(revision[0]))
+	}
+
+	watchChan := c.client.Watch(ctx, prefix, opts...)
 	return watchChan, nil
 }
 
 func convertClientKV(kv *mvccpb.KeyValue) KeyValue {
 	return KeyValue{
-		Key:         string(kv.Key),
-		Version:     kv.Version,
-		ModRevision: kv.ModRevision,
-		Value:       kv.Value,
+		Key:            string(kv.Key),
+		Version:        kv.Version,
+		ModRevision:    kv.ModRevision,
+		CreateRevision: kv.CreateRevision,
+		Value:          kv.Value,
 	}
 }

@@ -23,11 +23,17 @@ const (
 )
 
 type WatchEvent struct {
-	Type      WatchEventType  `json:"type"`
-	Object    *sdkmeta.Object `json:"object"`
-	Timestamp time.Time       `json:"timestamp"`
-	Revision  int64           `json:"revision,omitempty"`
-	Error     error           `json:"error,omitempty"`
+	Type      WatchEventType    `json:"type"`
+	Object    *sdkmeta.Object   `json:"object"` // in some exceptional cases it can be nil if the object is deleted and compaction disrupted watch process
+	ObjectKey sdkmeta.ObjectKey `json:"objectKey"`
+	Timestamp time.Time         `json:"timestamp"`
+	Revision  int64             `json:"revision,omitempty"`
+	Error     error             `json:"error,omitempty"`
+}
+
+type ObjectBatch struct {
+	Revision int64
+	Objects  []*sdkmeta.Object
 }
 
 // ResourceStore provides resource-specific operations and watch functionality
@@ -36,13 +42,13 @@ type ResourceStore interface {
 	Put(ctx context.Context, obj *sdkmeta.Object) error
 	Get(ctx context.Context, key sdkmeta.ObjectKey) (*sdkmeta.Object, error)
 	Delete(ctx context.Context, key sdkmeta.ObjectKey) error
-	List(ctx context.Context, objType *sdkmeta.ObjectType, limit int) ([]*sdkmeta.Object, error)
+	List(ctx context.Context, objType *sdkmeta.ObjectType, paging *Paging) (*ObjectBatch, error)
 
 	// Transaction operation builders
 	BuildPutTxOp(obj *sdkmeta.Object) (clientv3.Op, error)
 
 	// Watch operations
-	Watch(ctx context.Context, objType *sdkmeta.ObjectType, eventChan chan<- WatchEvent) error
+	Watch(ctx context.Context, objType *sdkmeta.ObjectType, eventChan chan<- WatchEvent, revision ...int64) error
 }
 
 type resourceStore struct {
@@ -82,23 +88,31 @@ func (s *resourceStore) Delete(ctx context.Context, key sdkmeta.ObjectKey) error
 	return s.clientWrapper.Delete(ctx, keyStr)
 }
 
-func (s *resourceStore) List(ctx context.Context, objType *sdkmeta.ObjectType, limit int) ([]*sdkmeta.Object, error) {
-	keyStr := objectTypeToDbKey(objType)
-	kvs, err := s.clientWrapper.List(ctx, keyStr, limit)
+func (s *resourceStore) List(ctx context.Context, objType *sdkmeta.ObjectType, paging *Paging) (*ObjectBatch, error) {
+	if paging == nil {
+		paging = &Paging{Prefix: objectTypeToDbKey(objType)}
+	} else {
+		paging.Prefix = objectTypeToDbKey(objType)
+	}
+
+	batch, err := s.clientWrapper.List(ctx, *paging)
 	if err != nil {
 		return nil, err
 	}
 
-	var resources []*sdkmeta.Object
-	for _, kv := range kvs {
-		resource, err := s.unmarshalResource(&kv)
+	var objects []*sdkmeta.Object
+	for _, kv := range batch.KVs {
+		object, err := s.unmarshalResource(&kv)
 		if err != nil {
 			return nil, err
 		}
-		resources = append(resources, resource)
+		objects = append(objects, object)
 	}
 
-	return resources, nil
+	return &ObjectBatch{
+		Revision: batch.Revision,
+		Objects:  objects,
+	}, nil
 }
 
 func (s *resourceStore) MarshalResource(resource *sdkmeta.Object) (string, error) {
@@ -118,21 +132,28 @@ func (s *resourceStore) BuildPutTxOp(resource *sdkmeta.Object) (clientv3.Op, err
 	return clientv3.OpPut(key, data), nil
 }
 
-func (s *resourceStore) Watch(ctx context.Context, objType *sdkmeta.ObjectType, eventChan chan<- WatchEvent) error {
+func (s *resourceStore) Watch(ctx context.Context, objType *sdkmeta.ObjectType, eventChan chan<- WatchEvent, revision ...int64) error {
 	keyStr := objectTypeToDbKey(objType)
-	go s.watchResources(ctx, keyStr, eventChan)
+
+	// Use revision if provided, otherwise start from beginning
+	var startRevision int64 = 0
+	if len(revision) > 0 && revision[0] > 0 {
+		startRevision = revision[0]
+	}
+
+	go s.watchResources(ctx, keyStr, eventChan, startRevision)
 	return nil
 }
 
 // watchResources
 // if eventChan is full this method will block until the channel is ready to receive the event
-func (s *resourceStore) watchResources(ctx context.Context, prefix string, eventChan chan<- WatchEvent) {
+func (s *resourceStore) watchResources(ctx context.Context, prefix string, eventChan chan<- WatchEvent, revision int64) {
 	defer close(eventChan)
 
 	watchCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	watchChan, err := s.clientWrapper.Watch(watchCtx, prefix)
+	watchChan, err := s.clientWrapper.Watch(watchCtx, prefix, revision)
 	if err != nil {
 		errorEvent := WatchEvent{
 			Type:      WatchEventTypeError,
@@ -263,6 +284,7 @@ func (s *resourceStore) unmarshalResource(kv *KeyValue) (*sdkmeta.Object, error)
 
 	obj.SystemMeta.Version = kv.Version
 	obj.SystemMeta.ModRevision = kv.ModRevision
+	obj.SystemMeta.CreateRevision = kv.CreateRevision
 
 	return &obj, nil
 }

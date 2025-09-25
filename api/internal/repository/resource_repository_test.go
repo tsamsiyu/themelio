@@ -71,30 +71,33 @@ func TestResourceRepository_List(t *testing.T) {
 		Kind:      "TestResource",
 		Namespace: "default",
 	}
-	expectedResources := []*sdkmeta.Object{
-		{
-			ObjectKey: &sdkmeta.ObjectKey{
-				ObjectType: *objType,
-				Name:       "test-resource-1",
+	expectedResources := &repository.ObjectBatch{
+		Revision: 1,
+		Objects: []*sdkmeta.Object{
+			{
+				ObjectKey: &sdkmeta.ObjectKey{
+					ObjectType: *objType,
+					Name:       "test-resource-1",
+				},
+				ObjectMeta: &sdkmeta.ObjectMeta{
+					Labels:      map[string]string{},
+					Annotations: map[string]string{},
+				},
+				SystemMeta: &sdkmeta.SystemMeta{
+					UID: "test-uid-1",
+				},
+				Spec: map[string]interface{}{},
 			},
-			ObjectMeta: &sdkmeta.ObjectMeta{
-				Labels:      map[string]string{},
-				Annotations: map[string]string{},
-			},
-			SystemMeta: &sdkmeta.SystemMeta{
-				UID: "test-uid-1",
-			},
-			Spec: map[string]interface{}{},
 		},
 	}
 
 	// Mock expectations
-	mockStore.EXPECT().List(ctx, objType, 100).Return(expectedResources, nil)
+	mockStore.EXPECT().List(ctx, objType, (*repository.Paging)(nil)).Return(expectedResources, nil)
 
 	// Test
-	result, err := repo.List(ctx, objType, 100)
+	result, err := repo.List(ctx, objType)
 	assert.NoError(t, err)
-	assert.Equal(t, expectedResources, result)
+	assert.Equal(t, expectedResources.Objects, result)
 }
 
 func TestResourceRepository_MarkDeleted(t *testing.T) {

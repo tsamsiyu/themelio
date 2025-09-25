@@ -52,7 +52,7 @@ func TestResourceRepository_Delete_ResourceWithoutOwnerReferences(t *testing.T) 
 	// Given: A resource without owner references
 	mockStore.EXPECT().Get(ctx, key).Return(resource, nil)
 	indexPrefix := "/index/owner-reference//example.com/v1/TestResource/default/test-resource"
-	mockClient.EXPECT().List(ctx, indexPrefix, -1).Return([]repository.KeyValue{}, nil)
+	mockClient.EXPECT().List(ctx, repository.Paging{Prefix: indexPrefix}).Return(&repository.Batch{KVs: []repository.KeyValue{}}, nil)
 
 	// Mock etcd client and transaction
 	mockEtcdClient := mocks.NewMockEtcdClientInterface(t)
@@ -130,7 +130,7 @@ func TestResourceRepository_Delete_ResourceWithOwnerReferences(t *testing.T) {
 	// Given: A resource with owner references
 	mockStore.EXPECT().Get(ctx, key).Return(resource, nil)
 	indexPrefix := "/index/owner-reference//example.com/v1/TestResource/default/test-resource"
-	mockClient.EXPECT().List(ctx, indexPrefix, -1).Return([]repository.KeyValue{}, nil)
+	mockClient.EXPECT().List(ctx, repository.Paging{Prefix: indexPrefix}).Return(&repository.Batch{KVs: []repository.KeyValue{}}, nil)
 
 	// Mock etcd client and transaction
 	mockEtcdClient := mocks.NewMockEtcdClientInterface(t)
@@ -185,7 +185,7 @@ func TestResourceRepository_Delete_ResourceWithChildResources(t *testing.T) {
 	// Given: A resource that might have child resources
 	mockStore.EXPECT().Get(ctx, key).Return(resource, nil)
 	indexPrefix := "/index/owner-reference//example.com/v1/TestResource/default/parent-resource"
-	mockClient.EXPECT().List(ctx, indexPrefix, -1).Return([]repository.KeyValue{}, nil)
+	mockClient.EXPECT().List(ctx, repository.Paging{Prefix: indexPrefix}).Return(&repository.Batch{KVs: []repository.KeyValue{}}, nil)
 
 	// Mock etcd client and transaction
 	mockEtcdClient := mocks.NewMockEtcdClientInterface(t)
@@ -283,7 +283,7 @@ func TestResourceRepository_Delete_ErrorDuringOwnerReferenceCleanup(t *testing.T
 	// Given: A resource with owner references and a failing child query
 	mockStore.EXPECT().Get(ctx, key).Return(resource, nil)
 	indexPrefix := "/index/owner-reference//example.com/v1/TestResource/default/test-resource"
-	mockClient.EXPECT().List(ctx, indexPrefix, -1).Return(nil, assert.AnError)
+	mockClient.EXPECT().List(ctx, repository.Paging{Prefix: indexPrefix}).Return(nil, assert.AnError)
 
 	// When: Attempting to delete the resource
 	err := repo.Delete(ctx, key, "test-lock")

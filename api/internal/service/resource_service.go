@@ -102,7 +102,7 @@ func (s *resourceService) ListResources(ctx context.Context, params Params) ([]*
 		return nil, err
 	}
 
-	return s.repo.List(ctx, typeMeta, 0)
+	return s.repo.List(ctx, typeMeta)
 }
 
 func (s *resourceService) DeleteResource(ctx context.Context, params Params) error {

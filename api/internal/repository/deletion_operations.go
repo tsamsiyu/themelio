@@ -107,13 +107,13 @@ func (b *DeletionOpBuilder) buildChildrenMarkDeletionOps(
 
 func (b *DeletionOpBuilder) ListDeletions(ctx context.Context, batchLimit int) (map[sdkmeta.ObjectKey]time.Time, error) {
 	prefix := "/deletion/"
-	kvs, err := b.clientWrapper.List(ctx, prefix, batchLimit)
+	batch, err := b.clientWrapper.List(ctx, Paging{Prefix: prefix, Limit: batchLimit})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to list deletion records from etcd")
 	}
 
 	records := make(map[sdkmeta.ObjectKey]time.Time)
-	for _, kv := range kvs {
+	for _, kv := range batch.KVs {
 		key, err := parseDeletionKey(kv.Key)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to parse deletion key")

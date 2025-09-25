@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
 	"go.uber.org/zap"
 
 	"github.com/tsamsiyu/themelio/api/internal/lib"
@@ -13,7 +14,14 @@ import (
 )
 
 type WatchConfig struct {
-	MaxRetries int
+	MaxRetries         int
+	ReconcileBatchSize int
+}
+
+type watchCacheEntry struct {
+	version        int64
+	createRevision int64
+	modRevision    int64
 }
 
 type WatchHandler struct {
@@ -27,6 +35,7 @@ type WatchHandler struct {
 	clientsMutex sync.RWMutex
 	lastRevision int64
 	retryCount   int
+	cache        map[sdkmeta.ObjectKey]watchCacheEntry
 }
 
 func NewWatchHandler(
@@ -42,6 +51,7 @@ func NewWatchHandler(
 		logger:  logger,
 		config:  config,
 		backoff: backoff,
+		cache:   make(map[sdkmeta.ObjectKey]watchCacheEntry),
 	}
 }
 
@@ -110,16 +120,32 @@ func (h *WatchHandler) watchLoop(ctx context.Context) {
 
 		watchChan := make(chan WatchEvent, 100)
 
-		// TODO: restart watcher with last revision if last error was not etcd's CompactedErr error
-		// TODO: if last error was CompactedErr or if start of watcher with a specified revision causes CompactedErr we have to call reconciler process
-		go h.store.Watch(watchCtx, h.objType, watchChan)
+		go h.store.Watch(watchCtx, h.objType, watchChan, h.lastRevision+1)
 
 		watchErr := h.processWatchEvents(watchCtx, watchChan)
 
 		if watchErr == nil {
 			h.backoff.Reset()
 			h.retryCount = 0
-			continue // watcher stopped without error
+			h.logger.Info("Watch stopped without error",
+				zap.String("key", objectTypeToDbKey(h.objType)),
+				zap.Int64("revision", h.lastRevision))
+			continue
+		}
+
+		if watchErr == rpctypes.ErrCompacted {
+			h.logger.Warn("Watch failed due to etcd compaction, performing reconciliation",
+				zap.String("key", objectTypeToDbKey(h.objType)),
+				zap.Error(watchErr))
+
+			if err := h.reconcile(ctx); err != nil {
+				h.logger.Error("Reconciliation failed",
+					zap.String("key", objectTypeToDbKey(h.objType)),
+					zap.Error(err))
+			} else {
+				h.logger.Info("Reconciliation completed successfully",
+					zap.String("key", objectTypeToDbKey(h.objType)))
+			}
 		}
 
 		if h.retryCount >= h.config.MaxRetries {
@@ -132,7 +158,7 @@ func (h *WatchHandler) watchLoop(ctx context.Context) {
 		h.retryCount++
 		backoffDuration := h.backoff.NextBackoff()
 
-		h.logger.Warn("Watch error, retrying",
+		h.logger.Warn("Retrying watch",
 			zap.String("key", objectTypeToDbKey(h.objType)),
 			zap.Error(watchErr),
 			zap.Int("retryCount", h.retryCount),
@@ -153,14 +179,32 @@ func (h *WatchHandler) processWatchEvents(ctx context.Context, watchChan <-chan 
 			return ctx.Err()
 		case event, ok := <-watchChan:
 			if !ok {
-				return errors.New("watch channel closed")
+				h.logger.Info("Watch channel closed, stopping watch loop",
+					zap.String("key", objectTypeToDbKey(h.objType)),
+					zap.Int64("revision", h.lastRevision))
+				return nil
 			}
 
-			if event.Type == WatchEventTypeError {
+			switch event.Type {
+			case WatchEventTypeError:
 				if errors.Is(event.Error, context.Canceled) {
 					return nil
 				}
 				return event.Error
+			case WatchEventTypeModified:
+				h.cache[*event.Object.ObjectKey] = watchCacheEntry{
+					version:        event.Object.SystemMeta.Version,
+					modRevision:    event.Object.SystemMeta.ModRevision,
+					createRevision: event.Object.SystemMeta.CreateRevision,
+				}
+			case WatchEventTypeAdded:
+				h.cache[*event.Object.ObjectKey] = watchCacheEntry{
+					version:        event.Object.SystemMeta.Version,
+					modRevision:    event.Object.SystemMeta.ModRevision,
+					createRevision: event.Object.SystemMeta.CreateRevision,
+				}
+			case WatchEventTypeDeleted:
+				delete(h.cache, *event.Object.ObjectKey)
 			}
 
 			h.lastRevision = event.Revision
@@ -170,21 +214,104 @@ func (h *WatchHandler) processWatchEvents(ctx context.Context, watchChan <-chan 
 }
 
 func (h *WatchHandler) reconcile(ctx context.Context) error {
-	resources, err := h.store.List(ctx, h.objType, 0)
-	if err != nil {
-		return err
-	}
+	lastKey := ""
 
-	// TODO: handle the cache of resources revisions
-
-	for _, resource := range resources {
-		event := WatchEvent{
-			Type:      WatchEventTypeAdded,
-			Object:    resource,
-			Timestamp: time.Now(),
+	for {
+		batch, err := h.store.List(ctx, h.objType, &Paging{
+			Prefix:  objectTypeToDbKey(h.objType),
+			Limit:   h.config.ReconcileBatchSize,
+			LastKey: lastKey,
+		})
+		if err != nil {
+			return err
 		}
-		// TODO: handle deletion events
-		h.broadcastEvent(ctx, event)
+
+		if len(batch.Objects) == 0 {
+			break
+		}
+
+		for _, obj := range batch.Objects {
+			key := *obj.ObjectKey
+			cachedEntry, exists := h.cache[key]
+
+			if !exists {
+				event := WatchEvent{
+					Type:      WatchEventTypeAdded,
+					Object:    obj,
+					Timestamp: time.Now(),
+					Revision:  batch.Revision,
+				}
+				h.broadcastEvent(ctx, event)
+			} else {
+
+				if obj.SystemMeta.CreateRevision > h.lastRevision {
+					// obj was deleted and then recreated
+					deletedEvent := WatchEvent{
+						Type:      WatchEventTypeDeleted,
+						Object:    nil,
+						ObjectKey: key,
+						Timestamp: time.Now(),
+						Revision:  batch.Revision,
+					}
+					h.broadcastEvent(ctx, deletedEvent)
+					createdEvent := WatchEvent{
+						Type:      WatchEventTypeAdded,
+						Object:    obj,
+						ObjectKey: key,
+						Timestamp: time.Now(),
+						Revision:  batch.Revision,
+					}
+					h.broadcastEvent(ctx, createdEvent)
+				} else if cachedEntry.modRevision != obj.SystemMeta.ModRevision {
+					event := WatchEvent{
+						Type:      WatchEventTypeModified,
+						Object:    obj,
+						Timestamp: time.Now(),
+						Revision:  batch.Revision,
+					}
+					h.broadcastEvent(ctx, event)
+				}
+			}
+
+			h.cache[key] = watchCacheEntry{
+				modRevision:    obj.SystemMeta.ModRevision,
+				createRevision: obj.SystemMeta.CreateRevision,
+				version:        obj.SystemMeta.Version,
+			}
+
+			if obj.SystemMeta.ModRevision > h.lastRevision {
+				h.lastRevision = obj.SystemMeta.ModRevision
+			}
+		}
+
+		for cacheKey := range h.cache {
+			var matchingObj *sdkmeta.Object
+			for i := range batch.Objects {
+				if *batch.Objects[i].ObjectKey == cacheKey {
+					matchingObj = batch.Objects[i]
+					break
+				}
+			}
+			if matchingObj == nil {
+				delete(h.cache, cacheKey)
+				deletedEvent := WatchEvent{
+					Type:      WatchEventTypeDeleted,
+					Object:    nil,
+					ObjectKey: cacheKey,
+					Timestamp: time.Now(),
+					Revision:  batch.Revision,
+				}
+				h.broadcastEvent(ctx, deletedEvent)
+			}
+		}
+
+		if len(batch.Objects) < h.config.ReconcileBatchSize {
+			break
+		}
+
+		lastObject := batch.Objects[len(batch.Objects)-1]
+		lastKey = objectKeyToDbKey(*lastObject.ObjectKey)
+		h.lastRevision = batch.Revision
 	}
 
 	return nil

@@ -70,13 +70,13 @@ func (b *OwnerReferenceOpBuilder) BuildIndexesCleanupOps(objKey sdkmeta.ObjectKe
 func (b *OwnerReferenceOpBuilder) GetChildrenKeys(ctx context.Context, parentKey sdkmeta.ObjectKey) ([]sdkmeta.ObjectKey, error) {
 	parentPrefixDbKey := buildOwnerReferenceIndexDbKeyPrefix(parentKey)
 
-	kvs, err := b.clientWrapper.List(ctx, parentPrefixDbKey, -1)
+	batch, err := b.clientWrapper.List(ctx, Paging{Prefix: parentPrefixDbKey})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get owner references from etcd")
 	}
 
-	childKeys := make([]sdkmeta.ObjectKey, len(kvs))
-	for _, kv := range kvs {
+	childKeys := make([]sdkmeta.ObjectKey, len(batch.KVs))
+	for _, kv := range batch.KVs {
 		_, childKey, err := parseOwnerReferenceIndexDbKey(kv.Key)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to parse index db key")
