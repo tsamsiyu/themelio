@@ -7,19 +7,25 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/tsamsiyu/themelio/api/internal/lib"
+	"github.com/tsamsiyu/themelio/api/internal/repository/types"
 	sdkmeta "github.com/tsamsiyu/themelio/sdk/pkg/types/meta"
 )
 
 type WatchManager struct {
-	store      ResourceStore
+	store      types.ResourceStore
 	logger     *zap.Logger
-	config     WatchConfig
+	config     types.WatchConfig
 	backoff    *lib.BackoffManager
 	handlers   map[string]*WatchHandler
 	handlersMu sync.RWMutex
 }
 
-func NewWatchManager(store ResourceStore, logger *zap.Logger, config WatchConfig, backoff *lib.BackoffManager) *WatchManager {
+func NewWatchManager(
+	store types.ResourceStore,
+	logger *zap.Logger,
+	config types.WatchConfig,
+	backoff *lib.BackoffManager,
+) *WatchManager {
 	return &WatchManager{
 		store:    store,
 		logger:   logger,
@@ -29,8 +35,8 @@ func NewWatchManager(store ResourceStore, logger *zap.Logger, config WatchConfig
 	}
 }
 
-func (m *WatchManager) Watch(ctx context.Context, objType *sdkmeta.ObjectType, namespace string) <-chan WatchEvent {
-	clientChan := make(chan WatchEvent, 100)
+func (m *WatchManager) Watch(ctx context.Context, objType *sdkmeta.ObjectType) (<-chan types.WatchEvent, error) {
+	clientChan := make(chan types.WatchEvent, 100)
 	keyStr := objectTypeToDbKey(objType)
 
 	m.handlersMu.Lock()
@@ -47,30 +53,35 @@ func (m *WatchManager) Watch(ctx context.Context, objType *sdkmeta.ObjectType, n
 
 	go m.cleanupHandler(ctx, keyStr, handler, clientChan)
 
-	return clientChan
+	return clientChan, nil
 }
 
 func (m *WatchManager) startHandler(ctx context.Context, handler *WatchHandler) {
-	eventChan := make(chan WatchEvent, 100)
+	eventChan := make(chan types.WatchEvent, 100)
 	handler.Start(ctx, eventChan)
 
 	go func() {
 		for event := range eventChan {
-			if event.Type == WatchEventTypeError {
+			if event.Type == types.WatchEventTypeError {
 				m.logger.Error("Handler error",
-					zap.String("key", objectTypeToDbKey(handler.objType)),
+					zap.String("key", objectTypeToDbKey(handler.ObjType)),
 					zap.Error(event.Error))
 			}
 		}
 	}()
 }
 
-func (m *WatchManager) cleanupHandler(ctx context.Context, key string, handler *WatchHandler, clientChan chan WatchEvent) {
+func (m *WatchManager) cleanupHandler(
+	ctx context.Context,
+	key string,
+	handler *WatchHandler,
+	clientChan chan types.WatchEvent,
+) {
 	<-ctx.Done()
 	handler.RemoveClient(clientChan)
 	close(clientChan)
 
-	if handler.getClientCount() == 0 {
+	if handler.GetClientCount() == 0 {
 		m.handlersMu.Lock()
 		defer m.handlersMu.Unlock()
 		if h, exists := m.handlers[key]; exists && h == handler {

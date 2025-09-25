@@ -16,6 +16,7 @@ import (
 	"github.com/tsamsiyu/themelio/api/internal/config"
 	"github.com/tsamsiyu/themelio/api/internal/lib"
 	"github.com/tsamsiyu/themelio/api/internal/repository"
+	"github.com/tsamsiyu/themelio/api/internal/repository/types"
 	"github.com/tsamsiyu/themelio/api/internal/service"
 	sharedservice "github.com/tsamsiyu/themelio/api/internal/service/shared"
 	"github.com/tsamsiyu/themelio/api/internal/worker/gc"
@@ -103,8 +104,8 @@ func NewETCDClient(cfg *config.Config) (*clientv3.Client, error) {
 	return client, nil
 }
 
-func NewResourceRepository(logger *zap.Logger, store repository.ResourceStore, clientWrapper repository.ClientWrapper) repository.ResourceRepository {
-	watchConfig := repository.WatchConfig{
+func NewResourceRepository(logger *zap.Logger, store types.ResourceStore, clientWrapper types.ClientWrapper) types.ResourceRepository {
+	watchConfig := types.WatchConfig{
 		MaxRetries: 5,
 	}
 	backoffConfig := lib.BackoffConfig{

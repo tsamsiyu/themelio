@@ -9,29 +9,26 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/tsamsiyu/themelio/api/internal/lib"
+	"github.com/tsamsiyu/themelio/api/internal/repository/types"
 	sdkmeta "github.com/tsamsiyu/themelio/sdk/pkg/types/meta"
 )
 
-type ResourceRepository interface {
-	Replace(ctx context.Context, obj *sdkmeta.Object, optimisticLock bool) error
-	Get(ctx context.Context, key sdkmeta.ObjectKey) (*sdkmeta.Object, error)
-	List(ctx context.Context, objType *sdkmeta.ObjectType) ([]*sdkmeta.Object, error)
-	Delete(ctx context.Context, key sdkmeta.ObjectKey, lockValue string) error
-	Watch(ctx context.Context, objType *sdkmeta.ObjectType, eventChan chan<- WatchEvent) error
-	MarkDeleted(ctx context.Context, key sdkmeta.ObjectKey) error
-	ListDeletions(ctx context.Context, lockKey string, lockExp time.Duration, batchLimit int) (*DeletionBatch, error)
-}
-
 type resourceRepository struct {
-	store             ResourceStore
-	clientWrapper     ClientWrapper
+	store             types.ResourceStore
+	clientWrapper     types.ClientWrapper
 	ownerRefOpBuilder *OwnerReferenceOpBuilder
 	deletionOpBuilder *DeletionOpBuilder
 	watchManager      *WatchManager
 	logger            *zap.Logger
 }
 
-func NewResourceRepository(logger *zap.Logger, store ResourceStore, clientWrapper ClientWrapper, watchConfig WatchConfig, backoffManager *lib.BackoffManager) ResourceRepository {
+func NewResourceRepository(
+	logger *zap.Logger,
+	store types.ResourceStore,
+	clientWrapper types.ClientWrapper,
+	watchConfig types.WatchConfig,
+	backoffManager *lib.BackoffManager,
+) types.ResourceRepository {
 	ownerRefOpBuilder := NewOwnerReferenceOpBuilder(store, clientWrapper, logger)
 	deletionOpBuilder := NewDeletionOpBuilder(store, clientWrapper, logger)
 	watchManager := NewWatchManager(store, logger, watchConfig, backoffManager)
@@ -128,19 +125,8 @@ func (r *resourceRepository) Delete(ctx context.Context, key sdkmeta.ObjectKey, 
 	return err
 }
 
-func (r *resourceRepository) Watch(ctx context.Context, objType *sdkmeta.ObjectType, eventChan chan<- WatchEvent) error {
-	watchChan := r.watchManager.Watch(ctx, objType, "")
-	go func() {
-		defer close(eventChan)
-		for event := range watchChan {
-			select {
-			case eventChan <- event:
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-	return nil
+func (r *resourceRepository) Watch(ctx context.Context, objType *sdkmeta.ObjectType) (<-chan types.WatchEvent, error) {
+	return r.watchManager.Watch(ctx, objType)
 }
 
 // MarkDeleted marks a resource for deletion by setting deletionTimestamp and adding to deletion collection
@@ -173,7 +159,7 @@ func (r *resourceRepository) MarkDeleted(ctx context.Context, key sdkmeta.Object
 }
 
 // ListDeletions returns a batch of resources marked for deletion using distributed locking
-func (r *resourceRepository) ListDeletions(ctx context.Context, lockKey string, lockExp time.Duration, batchLimit int) (*DeletionBatch, error) {
+func (r *resourceRepository) ListDeletions(ctx context.Context, lockKey string, lockExp time.Duration, batchLimit int) (*types.DeletionBatch, error) {
 	return r.deletionOpBuilder.AcquireDeletions(ctx, lockKey, lockExp, batchLimit)
 }
 

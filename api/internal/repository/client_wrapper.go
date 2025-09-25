@@ -7,62 +7,23 @@ import (
 	"go.etcd.io/etcd/api/v3/mvccpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
+
+	"github.com/tsamsiyu/themelio/api/internal/repository/types"
 )
-
-type Paging struct {
-	Prefix                string
-	LastKey               string
-	IncludeLastKeyInBatch bool
-	SortDesc              bool
-	Limit                 int
-	Revision              int64
-	MinModRevision        int64
-}
-
-type Batch struct {
-	Revision int64
-	KVs      []KeyValue
-}
-
-type KeyValue struct {
-	Key            string
-	Version        int64
-	ModRevision    int64
-	CreateRevision int64
-	Value          []byte
-}
-
-type ClientWrapper interface {
-	Client() EtcdClientInterface
-
-	// Basic CRUD operations with raw data
-	Put(ctx context.Context, key string, value string) error
-	Get(ctx context.Context, key string) (*KeyValue, error)
-	Delete(ctx context.Context, key string) error
-	List(ctx context.Context, paging Paging) (*Batch, error)
-
-	// Lease management
-	GrantLease(ctx context.Context, ttl int64) (*clientv3.LeaseGrantResponse, error)
-	RevokeLease(ctx context.Context, leaseID clientv3.LeaseID) (*clientv3.LeaseRevokeResponse, error)
-	KeepAliveLease(ctx context.Context, leaseID clientv3.LeaseID) (<-chan *clientv3.LeaseKeepAliveResponse, error)
-
-	// Watch operations
-	Watch(ctx context.Context, prefix string, revision ...int64) (<-chan clientv3.WatchResponse, error)
-}
 
 type clientWrapper struct {
 	logger *zap.Logger
 	client *clientv3.Client
 }
 
-func NewClientWrapper(logger *zap.Logger, client *clientv3.Client) ClientWrapper {
+func NewClientWrapper(logger *zap.Logger, client *clientv3.Client) types.ClientWrapper {
 	return &clientWrapper{
 		logger: logger,
 		client: client,
 	}
 }
 
-func (c *clientWrapper) Client() EtcdClientInterface {
+func (c *clientWrapper) Client() types.EtcdClientInterface {
 	return &etcdClientAdapter{client: c.client}
 }
 
@@ -80,7 +41,7 @@ func (c *clientWrapper) Put(ctx context.Context, key string, value string) error
 	return err
 }
 
-func (c *clientWrapper) Get(ctx context.Context, key string) (*KeyValue, error) {
+func (c *clientWrapper) Get(ctx context.Context, key string) (*types.KeyValue, error) {
 	resp, err := c.client.Get(ctx, key)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get from etcd")
@@ -100,7 +61,7 @@ func (c *clientWrapper) Delete(ctx context.Context, key string) error {
 	return err
 }
 
-func (c *clientWrapper) List(ctx context.Context, paging Paging) (*Batch, error) {
+func (c *clientWrapper) List(ctx context.Context, paging types.Paging) (*types.Batch, error) {
 	opts := make([]clientv3.OpOption, 0, 5)
 
 	queryKey := paging.Prefix
@@ -135,7 +96,7 @@ func (c *clientWrapper) List(ctx context.Context, paging Paging) (*Batch, error)
 		return nil, errors.Wrapf(err, "failed to list from etcd with prefix %s", paging.Prefix)
 	}
 
-	var kvs []KeyValue
+	var kvs []types.KeyValue
 	for i, kv := range resp.Kvs {
 		if i == 0 && !paging.IncludeLastKeyInBatch {
 			continue
@@ -143,7 +104,7 @@ func (c *clientWrapper) List(ctx context.Context, paging Paging) (*Batch, error)
 		kvs = append(kvs, convertClientKV(kv))
 	}
 
-	return &Batch{
+	return &types.Batch{
 		Revision: resp.Header.Revision,
 		KVs:      kvs,
 	}, nil
@@ -221,8 +182,8 @@ func (c *clientWrapper) Watch(ctx context.Context, prefix string, revision ...in
 	return watchChan, nil
 }
 
-func convertClientKV(kv *mvccpb.KeyValue) KeyValue {
-	return KeyValue{
+func convertClientKV(kv *mvccpb.KeyValue) types.KeyValue {
+	return types.KeyValue{
 		Key:            string(kv.Key),
 		Version:        kv.Version,
 		ModRevision:    kv.ModRevision,

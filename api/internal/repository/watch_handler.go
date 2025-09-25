@@ -10,64 +10,54 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/tsamsiyu/themelio/api/internal/lib"
+	"github.com/tsamsiyu/themelio/api/internal/repository/types"
 	sdkmeta "github.com/tsamsiyu/themelio/sdk/pkg/types/meta"
 )
 
-type WatchConfig struct {
-	MaxRetries         int
-	ReconcileBatchSize int
-}
-
-type watchCacheEntry struct {
-	version        int64
-	createRevision int64
-	modRevision    int64
-}
-
 type WatchHandler struct {
-	objType      *sdkmeta.ObjectType
-	store        ResourceStore
-	logger       *zap.Logger
-	config       WatchConfig
+	ObjType      *sdkmeta.ObjectType
+	Store        types.ResourceStore
+	Logger       *zap.Logger
+	config       types.WatchConfig
 	backoff      *lib.BackoffManager
-	eventChan    chan<- WatchEvent
-	clients      []chan<- WatchEvent
+	eventChan    chan<- types.WatchEvent
+	clients      []chan<- types.WatchEvent
 	clientsMutex sync.RWMutex
-	lastRevision int64
+	LastRevision int64
 	retryCount   int
-	cache        map[sdkmeta.ObjectKey]watchCacheEntry
+	Cache        map[sdkmeta.ObjectKey]types.WatchCacheEntry
 }
 
 func NewWatchHandler(
 	objType *sdkmeta.ObjectType,
-	store ResourceStore,
+	store types.ResourceStore,
 	logger *zap.Logger,
-	config WatchConfig,
+	config types.WatchConfig,
 	backoff *lib.BackoffManager,
 ) *WatchHandler {
 	return &WatchHandler{
-		objType: objType,
-		store:   store,
-		logger:  logger,
+		ObjType: objType,
+		Store:   store,
+		Logger:  logger,
 		config:  config,
 		backoff: backoff,
-		cache:   make(map[sdkmeta.ObjectKey]watchCacheEntry),
+		Cache:   make(map[sdkmeta.ObjectKey]types.WatchCacheEntry),
 	}
 }
 
-func (h *WatchHandler) Start(ctx context.Context, eventChan chan<- WatchEvent) {
+func (h *WatchHandler) Start(ctx context.Context, eventChan chan<- types.WatchEvent) {
 	h.eventChan = eventChan
 	h.AddClient(eventChan)
 	go h.watchLoop(ctx)
 }
 
-func (h *WatchHandler) AddClient(clientChan chan<- WatchEvent) {
+func (h *WatchHandler) AddClient(clientChan chan<- types.WatchEvent) {
 	h.clientsMutex.Lock()
 	defer h.clientsMutex.Unlock()
 	h.clients = append(h.clients, clientChan)
 }
 
-func (h *WatchHandler) RemoveClient(clientChan chan<- WatchEvent) {
+func (h *WatchHandler) RemoveClient(clientChan chan<- types.WatchEvent) {
 	h.clientsMutex.Lock()
 	defer h.clientsMutex.Unlock()
 	for i, client := range h.clients {
@@ -78,32 +68,30 @@ func (h *WatchHandler) RemoveClient(clientChan chan<- WatchEvent) {
 	}
 }
 
-func (h *WatchHandler) getClientCount() int {
+func (h *WatchHandler) GetClientCount() int {
 	h.clientsMutex.RLock()
 	defer h.clientsMutex.RUnlock()
 	return len(h.clients)
 }
 
-func (h *WatchHandler) copyClients() []chan<- WatchEvent {
+func (h *WatchHandler) copyClients() []chan<- types.WatchEvent {
 	h.clientsMutex.RLock()
 	defer h.clientsMutex.RUnlock()
 
-	clients := make([]chan<- WatchEvent, len(h.clients))
+	clients := make([]chan<- types.WatchEvent, len(h.clients))
 	copy(clients, h.clients)
 	return clients
 }
 
-func (h *WatchHandler) broadcastEvent(ctx context.Context, event WatchEvent) {
+func (h *WatchHandler) BroadcastEvent(ctx context.Context, event types.WatchEvent) {
 	clients := h.copyClients()
 
 	for _, client := range clients {
-		go func(client chan<- WatchEvent) {
-			select {
-			case client <- event:
-			case <-ctx.Done():
-				return
-			}
-		}(client)
+		select {
+		case client <- event:
+		case <-ctx.Done():
+			return
+		}
 	}
 }
 
@@ -118,39 +106,39 @@ func (h *WatchHandler) watchLoop(ctx context.Context) {
 		watchCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
 
-		watchChan := make(chan WatchEvent, 100)
+		watchChan := make(chan types.WatchEvent, 100)
 
-		go h.store.Watch(watchCtx, h.objType, watchChan, h.lastRevision+1)
+		go h.Store.Watch(watchCtx, h.ObjType, watchChan, h.LastRevision+1)
 
-		watchErr := h.processWatchEvents(watchCtx, watchChan)
+		watchErr := h.ProcessWatchEvents(watchCtx, watchChan)
 
 		if watchErr == nil {
 			h.backoff.Reset()
 			h.retryCount = 0
-			h.logger.Info("Watch stopped without error",
-				zap.String("key", objectTypeToDbKey(h.objType)),
-				zap.Int64("revision", h.lastRevision))
+			h.Logger.Info("Watch stopped without error",
+				zap.String("key", objectTypeToDbKey(h.ObjType)),
+				zap.Int64("revision", h.LastRevision))
 			continue
 		}
 
 		if watchErr == rpctypes.ErrCompacted {
-			h.logger.Warn("Watch failed due to etcd compaction, performing reconciliation",
-				zap.String("key", objectTypeToDbKey(h.objType)),
+			h.Logger.Warn("Watch failed due to etcd compaction, performing reconciliation",
+				zap.String("key", objectTypeToDbKey(h.ObjType)),
 				zap.Error(watchErr))
 
-			if err := h.reconcile(ctx); err != nil {
-				h.logger.Error("Reconciliation failed",
-					zap.String("key", objectTypeToDbKey(h.objType)),
+			if err := h.Reconcile(ctx); err != nil {
+				h.Logger.Error("Reconciliation failed",
+					zap.String("key", objectTypeToDbKey(h.ObjType)),
 					zap.Error(err))
 			} else {
-				h.logger.Info("Reconciliation completed successfully",
-					zap.String("key", objectTypeToDbKey(h.objType)))
+				h.Logger.Info("Reconciliation completed successfully",
+					zap.String("key", objectTypeToDbKey(h.ObjType)))
 			}
 		}
 
 		if h.retryCount >= h.config.MaxRetries {
-			h.logger.Error("Max retries exceeded, stopping watcher",
-				zap.String("key", objectTypeToDbKey(h.objType)),
+			h.Logger.Error("Max retries exceeded, stopping watcher",
+				zap.String("key", objectTypeToDbKey(h.ObjType)),
 				zap.Int("retryCount", h.retryCount))
 			return // todo: return specific error to notify caller
 		}
@@ -158,8 +146,8 @@ func (h *WatchHandler) watchLoop(ctx context.Context) {
 		h.retryCount++
 		backoffDuration := h.backoff.NextBackoff()
 
-		h.logger.Warn("Retrying watch",
-			zap.String("key", objectTypeToDbKey(h.objType)),
+		h.Logger.Warn("Retrying watch",
+			zap.String("key", objectTypeToDbKey(h.ObjType)),
 			zap.Error(watchErr),
 			zap.Int("retryCount", h.retryCount),
 			zap.Duration("backoff", backoffDuration))
@@ -172,53 +160,54 @@ func (h *WatchHandler) watchLoop(ctx context.Context) {
 	}
 }
 
-func (h *WatchHandler) processWatchEvents(ctx context.Context, watchChan <-chan WatchEvent) error {
+func (h *WatchHandler) ProcessWatchEvents(ctx context.Context, watchChan <-chan types.WatchEvent) error {
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case event, ok := <-watchChan:
 			if !ok {
-				h.logger.Info("Watch channel closed, stopping watch loop",
-					zap.String("key", objectTypeToDbKey(h.objType)),
-					zap.Int64("revision", h.lastRevision))
+				h.Logger.Info("Watch channel closed, stopping watch loop",
+					zap.String("key", objectTypeToDbKey(h.ObjType)),
+					zap.Int64("revision", h.LastRevision))
 				return nil
 			}
 
 			switch event.Type {
-			case WatchEventTypeError:
+			case types.WatchEventTypeError:
 				if errors.Is(event.Error, context.Canceled) {
 					return nil
 				}
 				return event.Error
-			case WatchEventTypeModified:
-				h.cache[*event.Object.ObjectKey] = watchCacheEntry{
-					version:        event.Object.SystemMeta.Version,
-					modRevision:    event.Object.SystemMeta.ModRevision,
-					createRevision: event.Object.SystemMeta.CreateRevision,
+			case types.WatchEventTypeModified:
+				h.Cache[*event.Object.ObjectKey] = types.WatchCacheEntry{
+					Version:        event.Object.SystemMeta.Version,
+					ModRevision:    event.Object.SystemMeta.ModRevision,
+					CreateRevision: event.Object.SystemMeta.CreateRevision,
 				}
-			case WatchEventTypeAdded:
-				h.cache[*event.Object.ObjectKey] = watchCacheEntry{
-					version:        event.Object.SystemMeta.Version,
-					modRevision:    event.Object.SystemMeta.ModRevision,
-					createRevision: event.Object.SystemMeta.CreateRevision,
+			case types.WatchEventTypeAdded:
+				h.Cache[*event.Object.ObjectKey] = types.WatchCacheEntry{
+					Version:        event.Object.SystemMeta.Version,
+					ModRevision:    event.Object.SystemMeta.ModRevision,
+					CreateRevision: event.Object.SystemMeta.CreateRevision,
 				}
-			case WatchEventTypeDeleted:
-				delete(h.cache, *event.Object.ObjectKey)
+			case types.WatchEventTypeDeleted:
+				delete(h.Cache, *event.Object.ObjectKey)
 			}
 
-			h.lastRevision = event.Revision
-			h.broadcastEvent(ctx, event)
+			h.LastRevision = event.Revision
+			h.BroadcastEvent(ctx, event)
 		}
 	}
 }
 
-func (h *WatchHandler) reconcile(ctx context.Context) error {
+func (h *WatchHandler) Reconcile(ctx context.Context) error {
 	lastKey := ""
+	allCurrentKeys := make(map[sdkmeta.ObjectKey]bool)
 
 	for {
-		batch, err := h.store.List(ctx, h.objType, &Paging{
-			Prefix:  objectTypeToDbKey(h.objType),
+		batch, err := h.Store.List(ctx, h.ObjType, &types.Paging{
+			Prefix:  objectTypeToDbKey(h.ObjType),
 			Limit:   h.config.ReconcileBatchSize,
 			LastKey: lastKey,
 		})
@@ -232,78 +221,57 @@ func (h *WatchHandler) reconcile(ctx context.Context) error {
 
 		for _, obj := range batch.Objects {
 			key := *obj.ObjectKey
-			cachedEntry, exists := h.cache[key]
+			allCurrentKeys[key] = true
+			cachedEntry, exists := h.Cache[key]
 
 			if !exists {
-				event := WatchEvent{
-					Type:      WatchEventTypeAdded,
+				event := types.WatchEvent{
+					Type:      types.WatchEventTypeAdded,
 					Object:    obj,
+					ObjectKey: key,
 					Timestamp: time.Now(),
 					Revision:  batch.Revision,
 				}
-				h.broadcastEvent(ctx, event)
+				h.BroadcastEvent(ctx, event)
 			} else {
-
-				if obj.SystemMeta.CreateRevision > h.lastRevision {
-					// obj was deleted and then recreated
-					deletedEvent := WatchEvent{
-						Type:      WatchEventTypeDeleted,
+				if cachedEntry.CreateRevision != obj.SystemMeta.CreateRevision {
+					deletedEvent := types.WatchEvent{
+						Type:      types.WatchEventTypeDeleted,
 						Object:    nil,
 						ObjectKey: key,
 						Timestamp: time.Now(),
 						Revision:  batch.Revision,
 					}
-					h.broadcastEvent(ctx, deletedEvent)
-					createdEvent := WatchEvent{
-						Type:      WatchEventTypeAdded,
+					h.BroadcastEvent(ctx, deletedEvent)
+
+					addedEvent := types.WatchEvent{
+						Type:      types.WatchEventTypeAdded,
 						Object:    obj,
 						ObjectKey: key,
 						Timestamp: time.Now(),
 						Revision:  batch.Revision,
 					}
-					h.broadcastEvent(ctx, createdEvent)
-				} else if cachedEntry.modRevision != obj.SystemMeta.ModRevision {
-					event := WatchEvent{
-						Type:      WatchEventTypeModified,
+					h.BroadcastEvent(ctx, addedEvent)
+				} else if cachedEntry.ModRevision != obj.SystemMeta.ModRevision {
+					event := types.WatchEvent{
+						Type:      types.WatchEventTypeModified,
 						Object:    obj,
+						ObjectKey: key,
 						Timestamp: time.Now(),
 						Revision:  batch.Revision,
 					}
-					h.broadcastEvent(ctx, event)
+					h.BroadcastEvent(ctx, event)
 				}
 			}
 
-			h.cache[key] = watchCacheEntry{
-				modRevision:    obj.SystemMeta.ModRevision,
-				createRevision: obj.SystemMeta.CreateRevision,
-				version:        obj.SystemMeta.Version,
-			}
-
-			if obj.SystemMeta.ModRevision > h.lastRevision {
-				h.lastRevision = obj.SystemMeta.ModRevision
+			h.Cache[key] = types.WatchCacheEntry{
+				ModRevision:    obj.SystemMeta.ModRevision,
+				CreateRevision: obj.SystemMeta.CreateRevision,
+				Version:        obj.SystemMeta.Version,
 			}
 		}
 
-		for cacheKey := range h.cache {
-			var matchingObj *sdkmeta.Object
-			for i := range batch.Objects {
-				if *batch.Objects[i].ObjectKey == cacheKey {
-					matchingObj = batch.Objects[i]
-					break
-				}
-			}
-			if matchingObj == nil {
-				delete(h.cache, cacheKey)
-				deletedEvent := WatchEvent{
-					Type:      WatchEventTypeDeleted,
-					Object:    nil,
-					ObjectKey: cacheKey,
-					Timestamp: time.Now(),
-					Revision:  batch.Revision,
-				}
-				h.broadcastEvent(ctx, deletedEvent)
-			}
-		}
+		h.LastRevision = batch.Revision
 
 		if len(batch.Objects) < h.config.ReconcileBatchSize {
 			break
@@ -311,7 +279,26 @@ func (h *WatchHandler) reconcile(ctx context.Context) error {
 
 		lastObject := batch.Objects[len(batch.Objects)-1]
 		lastKey = objectKeyToDbKey(*lastObject.ObjectKey)
-		h.lastRevision = batch.Revision
+	}
+
+	// check for objects in cache that are not in any batch (deleted objects)
+	keysToDelete := make([]sdkmeta.ObjectKey, 0)
+	for cacheKey := range h.Cache {
+		if !allCurrentKeys[cacheKey] {
+			keysToDelete = append(keysToDelete, cacheKey)
+		}
+	}
+
+	for _, keyToDelete := range keysToDelete {
+		delete(h.Cache, keyToDelete)
+		deletedEvent := types.WatchEvent{
+			Type:      types.WatchEventTypeDeleted,
+			Object:    nil,
+			ObjectKey: keyToDelete,
+			Timestamp: time.Now(),
+			Revision:  h.LastRevision,
+		}
+		h.BroadcastEvent(ctx, deletedEvent)
 	}
 
 	return nil

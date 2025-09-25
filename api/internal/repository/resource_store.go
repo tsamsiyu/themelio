@@ -10,53 +10,16 @@ import (
 	"go.uber.org/zap"
 
 	internalerrors "github.com/tsamsiyu/themelio/api/internal/errors"
+	"github.com/tsamsiyu/themelio/api/internal/repository/types"
 	sdkmeta "github.com/tsamsiyu/themelio/sdk/pkg/types/meta"
 )
 
-type WatchEventType string
-
-const (
-	WatchEventTypeAdded    WatchEventType = "added"
-	WatchEventTypeModified WatchEventType = "modified"
-	WatchEventTypeDeleted  WatchEventType = "deleted"
-	WatchEventTypeError    WatchEventType = "error"
-)
-
-type WatchEvent struct {
-	Type      WatchEventType    `json:"type"`
-	Object    *sdkmeta.Object   `json:"object"` // in some exceptional cases it can be nil if the object is deleted and compaction disrupted watch process
-	ObjectKey sdkmeta.ObjectKey `json:"objectKey"`
-	Timestamp time.Time         `json:"timestamp"`
-	Revision  int64             `json:"revision,omitempty"`
-	Error     error             `json:"error,omitempty"`
-}
-
-type ObjectBatch struct {
-	Revision int64
-	Objects  []*sdkmeta.Object
-}
-
-// ResourceStore provides resource-specific operations and watch functionality
-type ResourceStore interface {
-	// Basic CRUD operations with automatic marshaling
-	Put(ctx context.Context, obj *sdkmeta.Object) error
-	Get(ctx context.Context, key sdkmeta.ObjectKey) (*sdkmeta.Object, error)
-	Delete(ctx context.Context, key sdkmeta.ObjectKey) error
-	List(ctx context.Context, objType *sdkmeta.ObjectType, paging *Paging) (*ObjectBatch, error)
-
-	// Transaction operation builders
-	BuildPutTxOp(obj *sdkmeta.Object) (clientv3.Op, error)
-
-	// Watch operations
-	Watch(ctx context.Context, objType *sdkmeta.ObjectType, eventChan chan<- WatchEvent, revision ...int64) error
-}
-
 type resourceStore struct {
-	clientWrapper ClientWrapper
+	clientWrapper types.ClientWrapper
 	logger        *zap.Logger
 }
 
-func NewResourceStore(logger *zap.Logger, clientWrapper ClientWrapper) ResourceStore {
+func NewResourceStore(logger *zap.Logger, clientWrapper types.ClientWrapper) types.ResourceStore {
 	return &resourceStore{
 		clientWrapper: clientWrapper,
 		logger:        logger,
@@ -88,9 +51,9 @@ func (s *resourceStore) Delete(ctx context.Context, key sdkmeta.ObjectKey) error
 	return s.clientWrapper.Delete(ctx, keyStr)
 }
 
-func (s *resourceStore) List(ctx context.Context, objType *sdkmeta.ObjectType, paging *Paging) (*ObjectBatch, error) {
+func (s *resourceStore) List(ctx context.Context, objType *sdkmeta.ObjectType, paging *types.Paging) (*types.ObjectBatch, error) {
 	if paging == nil {
-		paging = &Paging{Prefix: objectTypeToDbKey(objType)}
+		paging = &types.Paging{Prefix: objectTypeToDbKey(objType)}
 	} else {
 		paging.Prefix = objectTypeToDbKey(objType)
 	}
@@ -109,7 +72,7 @@ func (s *resourceStore) List(ctx context.Context, objType *sdkmeta.ObjectType, p
 		objects = append(objects, object)
 	}
 
-	return &ObjectBatch{
+	return &types.ObjectBatch{
 		Revision: batch.Revision,
 		Objects:  objects,
 	}, nil
@@ -132,7 +95,7 @@ func (s *resourceStore) BuildPutTxOp(resource *sdkmeta.Object) (clientv3.Op, err
 	return clientv3.OpPut(key, data), nil
 }
 
-func (s *resourceStore) Watch(ctx context.Context, objType *sdkmeta.ObjectType, eventChan chan<- WatchEvent, revision ...int64) error {
+func (s *resourceStore) Watch(ctx context.Context, objType *sdkmeta.ObjectType, eventChan chan<- types.WatchEvent, revision ...int64) error {
 	keyStr := objectTypeToDbKey(objType)
 
 	// Use revision if provided, otherwise start from beginning
@@ -147,7 +110,7 @@ func (s *resourceStore) Watch(ctx context.Context, objType *sdkmeta.ObjectType, 
 
 // watchResources
 // if eventChan is full this method will block until the channel is ready to receive the event
-func (s *resourceStore) watchResources(ctx context.Context, prefix string, eventChan chan<- WatchEvent, revision int64) {
+func (s *resourceStore) watchResources(ctx context.Context, prefix string, eventChan chan<- types.WatchEvent, revision int64) {
 	defer close(eventChan)
 
 	watchCtx, cancel := context.WithCancel(ctx)
@@ -155,8 +118,8 @@ func (s *resourceStore) watchResources(ctx context.Context, prefix string, event
 
 	watchChan, err := s.clientWrapper.Watch(watchCtx, prefix, revision)
 	if err != nil {
-		errorEvent := WatchEvent{
-			Type:      WatchEventTypeError,
+		errorEvent := types.WatchEvent{
+			Type:      types.WatchEventTypeError,
 			Error:     err,
 			Timestamp: time.Now(),
 		}
@@ -178,8 +141,8 @@ func (s *resourceStore) watchResources(ctx context.Context, prefix string, event
 			}
 
 			if watchResp.Err() != nil {
-				errorEvent := WatchEvent{
-					Type:      WatchEventTypeError,
+				errorEvent := types.WatchEvent{
+					Type:      types.WatchEventTypeError,
 					Error:     watchResp.Err(),
 					Timestamp: time.Now(),
 					Revision:  watchResp.CompactRevision,
@@ -219,8 +182,8 @@ func (s *resourceStore) watchResources(ctx context.Context, prefix string, event
 	}
 }
 
-func (s *resourceStore) convertEtcdEventToWatchEvent(ev *clientv3.Event, revision int64) (WatchEvent, error) {
-	event := WatchEvent{
+func (s *resourceStore) convertEtcdEventToWatchEvent(ev *clientv3.Event, revision int64) (types.WatchEvent, error) {
+	event := types.WatchEvent{
 		Timestamp: time.Now(),
 		Revision:  revision,
 	}
@@ -228,9 +191,9 @@ func (s *resourceStore) convertEtcdEventToWatchEvent(ev *clientv3.Event, revisio
 	switch ev.Type {
 	case clientv3.EventTypePut:
 		if ev.PrevKv == nil {
-			event.Type = WatchEventTypeAdded
+			event.Type = types.WatchEventTypeAdded
 		} else {
-			event.Type = WatchEventTypeModified
+			event.Type = types.WatchEventTypeModified
 		}
 
 		kv := convertClientKV(ev.Kv)
@@ -241,7 +204,7 @@ func (s *resourceStore) convertEtcdEventToWatchEvent(ev *clientv3.Event, revisio
 		event.Object = resource
 
 	case clientv3.EventTypeDelete:
-		event.Type = WatchEventTypeDeleted
+		event.Type = types.WatchEventTypeDeleted
 
 		if ev.PrevKv != nil {
 			kv := convertClientKV(ev.PrevKv)
@@ -276,7 +239,7 @@ func (s *resourceStore) convertEtcdEventToWatchEvent(ev *clientv3.Event, revisio
 	return event, nil
 }
 
-func (s *resourceStore) unmarshalResource(kv *KeyValue) (*sdkmeta.Object, error) {
+func (s *resourceStore) unmarshalResource(kv *types.KeyValue) (*sdkmeta.Object, error) {
 	var obj sdkmeta.Object
 	if err := json.Unmarshal(kv.Value, &obj); err != nil {
 		return nil, internalerrors.NewMarshalingError("Failed to unmarshal resource")

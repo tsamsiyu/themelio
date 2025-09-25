@@ -6,7 +6,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/tsamsiyu/themelio/api/internal/repository"
+	"github.com/tsamsiyu/themelio/api/internal/repository/types"
 	sdkmeta "github.com/tsamsiyu/themelio/sdk/pkg/types/meta"
 )
 
@@ -42,13 +42,13 @@ func DefaultConfig() *Config {
 // This is the single source of truth for deleting resources
 type Worker struct {
 	logger    *zap.Logger
-	repo      repository.ResourceRepository
+	repo      types.ResourceRepository
 	config    *Config
 	eventChan chan DeletionEvent
 	stopChan  chan struct{}
 }
 
-func NewWorker(logger *zap.Logger, repo repository.ResourceRepository, config *Config) *Worker {
+func NewWorker(logger *zap.Logger, repo types.ResourceRepository, config *Config) *Worker {
 	if config == nil {
 		config = DefaultConfig()
 	}

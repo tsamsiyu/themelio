@@ -9,22 +9,21 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 
+	"github.com/tsamsiyu/themelio/api/internal/repository/types"
 	sdkmeta "github.com/tsamsiyu/themelio/sdk/pkg/types/meta"
 )
-
-// todo: use parent key + child key as the key and empty string as a value
 
 // the idea of reversed references is to quickly find children resources
 // we don't need reversed references for owner references that are not blocking deletion
 
 type OwnerReferenceOpBuilder struct {
-	store         ResourceStore
-	clientWrapper ClientWrapper
+	store         types.ResourceStore
+	clientWrapper types.ClientWrapper
 	logger        *zap.Logger
 }
 
 // NewOwnerReferenceOpBuilder creates a new OwnerReferenceOpBuilder
-func NewOwnerReferenceOpBuilder(store ResourceStore, clientWrapper ClientWrapper, logger *zap.Logger) *OwnerReferenceOpBuilder {
+func NewOwnerReferenceOpBuilder(store types.ResourceStore, clientWrapper types.ClientWrapper, logger *zap.Logger) *OwnerReferenceOpBuilder {
 	return &OwnerReferenceOpBuilder{
 		store:         store,
 		clientWrapper: clientWrapper,
@@ -70,7 +69,7 @@ func (b *OwnerReferenceOpBuilder) BuildIndexesCleanupOps(objKey sdkmeta.ObjectKe
 func (b *OwnerReferenceOpBuilder) GetChildrenKeys(ctx context.Context, parentKey sdkmeta.ObjectKey) ([]sdkmeta.ObjectKey, error) {
 	parentPrefixDbKey := buildOwnerReferenceIndexDbKeyPrefix(parentKey)
 
-	batch, err := b.clientWrapper.List(ctx, Paging{Prefix: parentPrefixDbKey})
+	batch, err := b.clientWrapper.List(ctx, types.Paging{Prefix: parentPrefixDbKey})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get owner references from etcd")
 	}

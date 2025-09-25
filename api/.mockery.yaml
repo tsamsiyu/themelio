@@ -7,7 +7,7 @@ resolve-type-alias: false
 disable-version-string: true
 issue-845-fix: true
 packages:
-  github.com/tsamsiyu/themelio/api/internal/repository:
+  github.com/tsamsiyu/themelio/api/internal/repository/types:
     interfaces:
       ResourceRepository:
       ClientWrapper:

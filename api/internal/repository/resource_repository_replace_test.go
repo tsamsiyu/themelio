@@ -1,4 +1,4 @@
-package repository_test
+package repository
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/tsamsiyu/themelio/api/internal/lib"
-	"github.com/tsamsiyu/themelio/api/internal/repository"
+	"github.com/tsamsiyu/themelio/api/internal/repository/types"
 	"github.com/tsamsiyu/themelio/api/mocks"
 	sdkmeta "github.com/tsamsiyu/themelio/sdk/pkg/types/meta"
 )
@@ -20,9 +20,9 @@ func TestResourceRepository_Replace_NewResource(t *testing.T) {
 	mockStore := mocks.NewMockResourceStore(t)
 	mockClient := mocks.NewMockClientWrapper(t)
 	backoffManager := &lib.BackoffManager{}
-	watchConfig := repository.WatchConfig{}
+	watchConfig := types.WatchConfig{}
 
-	repo := repository.NewResourceRepository(logger, mockStore, mockClient, watchConfig, backoffManager)
+	repo := NewResourceRepository(logger, mockStore, mockClient, watchConfig, backoffManager)
 
 	ctx := context.Background()
 	key := sdkmeta.ObjectKey{
@@ -49,7 +49,7 @@ func TestResourceRepository_Replace_NewResource(t *testing.T) {
 	}
 
 	// Given: A new resource that doesn't exist yet
-	mockStore.EXPECT().Get(ctx, key).Return(nil, repository.NewNotFoundError("resource not found"))
+	mockStore.EXPECT().Get(ctx, key).Return(nil, NewNotFoundError("resource not found"))
 	mockStore.EXPECT().BuildPutTxOp(resource).Return(clientv3.OpPut("/example.com/v1/TestResource/default/new-resource", "{}"), nil)
 
 	// Mock etcd client and transaction
@@ -72,9 +72,9 @@ func TestResourceRepository_Replace_NewResource_WithOwnerReferences(t *testing.T
 	mockStore := mocks.NewMockResourceStore(t)
 	mockClient := mocks.NewMockClientWrapper(t)
 	backoffManager := &lib.BackoffManager{}
-	watchConfig := repository.WatchConfig{}
+	watchConfig := types.WatchConfig{}
 
-	repo := repository.NewResourceRepository(logger, mockStore, mockClient, watchConfig, backoffManager)
+	repo := NewResourceRepository(logger, mockStore, mockClient, watchConfig, backoffManager)
 
 	ctx := context.Background()
 	key := sdkmeta.ObjectKey{
@@ -114,7 +114,7 @@ func TestResourceRepository_Replace_NewResource_WithOwnerReferences(t *testing.T
 	}
 
 	// Given: A new resource with owner references that doesn't exist yet
-	mockStore.EXPECT().Get(ctx, key).Return(nil, repository.NewNotFoundError("resource not found"))
+	mockStore.EXPECT().Get(ctx, key).Return(nil, NewNotFoundError("resource not found"))
 	mockStore.EXPECT().BuildPutTxOp(resource).Return(clientv3.OpPut("/example.com/v1/TestResource/default/new-resource", "{}"), nil)
 
 	// Mock etcd client and transaction
@@ -137,9 +137,9 @@ func TestResourceRepository_Replace_UpdateExistingResource(t *testing.T) {
 	mockStore := mocks.NewMockResourceStore(t)
 	mockClient := mocks.NewMockClientWrapper(t)
 	backoffManager := &lib.BackoffManager{}
-	watchConfig := repository.WatchConfig{}
+	watchConfig := types.WatchConfig{}
 
-	repo := repository.NewResourceRepository(logger, mockStore, mockClient, watchConfig, backoffManager)
+	repo := NewResourceRepository(logger, mockStore, mockClient, watchConfig, backoffManager)
 
 	ctx := context.Background()
 	key := sdkmeta.ObjectKey{
@@ -232,9 +232,9 @@ func TestResourceRepository_Replace_NoOwnerReferenceChanges(t *testing.T) {
 	mockStore := mocks.NewMockResourceStore(t)
 	mockClient := mocks.NewMockClientWrapper(t)
 	backoffManager := &lib.BackoffManager{}
-	watchConfig := repository.WatchConfig{}
+	watchConfig := types.WatchConfig{}
 
-	repo := repository.NewResourceRepository(logger, mockStore, mockClient, watchConfig, backoffManager)
+	repo := NewResourceRepository(logger, mockStore, mockClient, watchConfig, backoffManager)
 
 	ctx := context.Background()
 	key := sdkmeta.ObjectKey{

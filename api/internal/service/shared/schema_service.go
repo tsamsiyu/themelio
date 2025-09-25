@@ -7,7 +7,7 @@ import (
 	"go.uber.org/zap"
 
 	internalerrors "github.com/tsamsiyu/themelio/api/internal/errors"
-	"github.com/tsamsiyu/themelio/api/internal/repository"
+	"github.com/tsamsiyu/themelio/api/internal/repository/types"
 	sdkmeta "github.com/tsamsiyu/themelio/sdk/pkg/types/meta"
 	sdkschema "github.com/tsamsiyu/themelio/sdk/pkg/types/schema"
 	sdkvalidation "github.com/tsamsiyu/themelio/sdk/pkg/validation"
@@ -23,10 +23,10 @@ type SchemaService interface {
 
 type schemaService struct {
 	logger *zap.Logger
-	repo   repository.SchemaRepository
+	repo   types.SchemaRepository
 }
 
-func NewSchemaService(logger *zap.Logger, repo repository.SchemaRepository) SchemaService {
+func NewSchemaService(logger *zap.Logger, repo types.SchemaRepository) SchemaService {
 	return &schemaService{
 		logger: logger,
 		repo:   repo,

@@ -10,21 +10,21 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 
+	"github.com/tsamsiyu/themelio/api/internal/repository/types"
 	sdkmeta "github.com/tsamsiyu/themelio/sdk/pkg/types/meta"
 )
 
-type DeletionBatch struct {
-	ObjectKeys []sdkmeta.ObjectKey
-	LeaseID    clientv3.LeaseID
-}
-
 type DeletionOpBuilder struct {
-	store         ResourceStore
-	clientWrapper ClientWrapper
+	store         types.ResourceStore
+	clientWrapper types.ClientWrapper
 	logger        *zap.Logger
 }
 
-func NewDeletionOpBuilder(store ResourceStore, clientWrapper ClientWrapper, logger *zap.Logger) *DeletionOpBuilder {
+func NewDeletionOpBuilder(
+	store types.ResourceStore,
+	clientWrapper types.ClientWrapper,
+	logger *zap.Logger,
+) *DeletionOpBuilder {
 	return &DeletionOpBuilder{
 		store:         store,
 		clientWrapper: clientWrapper,
@@ -107,7 +107,7 @@ func (b *DeletionOpBuilder) buildChildrenMarkDeletionOps(
 
 func (b *DeletionOpBuilder) ListDeletions(ctx context.Context, batchLimit int) (map[sdkmeta.ObjectKey]time.Time, error) {
 	prefix := "/deletion/"
-	batch, err := b.clientWrapper.List(ctx, Paging{Prefix: prefix, Limit: batchLimit})
+	batch, err := b.clientWrapper.List(ctx, types.Paging{Prefix: prefix, Limit: batchLimit})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to list deletion records from etcd")
 	}
@@ -128,7 +128,7 @@ func (b *DeletionOpBuilder) ListDeletions(ctx context.Context, batchLimit int) (
 	return records, nil
 }
 
-func (b *DeletionOpBuilder) AcquireDeletions(ctx context.Context, lockKey string, lockExp time.Duration, batchLimit int) (*DeletionBatch, error) {
+func (b *DeletionOpBuilder) AcquireDeletions(ctx context.Context, lockKey string, lockExp time.Duration, batchLimit int) (*types.DeletionBatch, error) {
 	leaseResp, err := b.clientWrapper.GrantLease(ctx, int64(lockExp.Seconds()))
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to grant lease for deletion lock")
@@ -142,7 +142,7 @@ func (b *DeletionOpBuilder) AcquireDeletions(ctx context.Context, lockKey string
 
 	if len(deletions) == 0 {
 		b.clientWrapper.RevokeLease(ctx, leaseResp.ID)
-		return &DeletionBatch{ObjectKeys: []sdkmeta.ObjectKey{}, LeaseID: leaseResp.ID}, nil
+		return &types.DeletionBatch{ObjectKeys: []sdkmeta.ObjectKey{}, LeaseID: leaseResp.ID}, nil
 	}
 
 	var objectKeys []sdkmeta.ObjectKey
@@ -173,7 +173,7 @@ func (b *DeletionOpBuilder) AcquireDeletions(ctx context.Context, lockKey string
 		}
 	}
 
-	return &DeletionBatch{ObjectKeys: objectKeys, LeaseID: leaseResp.ID}, nil
+	return &types.DeletionBatch{ObjectKeys: objectKeys, LeaseID: leaseResp.ID}, nil
 }
 
 func removeOwnerReference(ownerRefs []sdkmeta.OwnerReference, exceptID string) []sdkmeta.OwnerReference {

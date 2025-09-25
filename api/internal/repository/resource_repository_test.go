@@ -1,4 +1,4 @@
-package repository_test
+package repository
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/tsamsiyu/themelio/api/internal/lib"
-	"github.com/tsamsiyu/themelio/api/internal/repository"
+	"github.com/tsamsiyu/themelio/api/internal/repository/types"
 	"github.com/tsamsiyu/themelio/api/mocks"
 	sdkmeta "github.com/tsamsiyu/themelio/sdk/pkg/types/meta"
 )
@@ -20,9 +20,9 @@ func TestResourceRepository_Get(t *testing.T) {
 	mockStore := mocks.NewMockResourceStore(t)
 	mockClient := mocks.NewMockClientWrapper(t)
 	backoffManager := &lib.BackoffManager{}
-	watchConfig := repository.WatchConfig{}
+	watchConfig := types.WatchConfig{}
 
-	repo := repository.NewResourceRepository(logger, mockStore, mockClient, watchConfig, backoffManager)
+	repo := NewResourceRepository(logger, mockStore, mockClient, watchConfig, backoffManager)
 
 	ctx := context.Background()
 	key := sdkmeta.ObjectKey{
@@ -60,9 +60,9 @@ func TestResourceRepository_List(t *testing.T) {
 	mockStore := mocks.NewMockResourceStore(t)
 	mockClient := mocks.NewMockClientWrapper(t)
 	backoffManager := &lib.BackoffManager{}
-	watchConfig := repository.WatchConfig{}
+	watchConfig := types.WatchConfig{}
 
-	repo := repository.NewResourceRepository(logger, mockStore, mockClient, watchConfig, backoffManager)
+	repo := NewResourceRepository(logger, mockStore, mockClient, watchConfig, backoffManager)
 
 	ctx := context.Background()
 	objType := &sdkmeta.ObjectType{
@@ -71,7 +71,7 @@ func TestResourceRepository_List(t *testing.T) {
 		Kind:      "TestResource",
 		Namespace: "default",
 	}
-	expectedResources := &repository.ObjectBatch{
+	expectedResources := &types.ObjectBatch{
 		Revision: 1,
 		Objects: []*sdkmeta.Object{
 			{
@@ -92,7 +92,7 @@ func TestResourceRepository_List(t *testing.T) {
 	}
 
 	// Mock expectations
-	mockStore.EXPECT().List(ctx, objType, (*repository.Paging)(nil)).Return(expectedResources, nil)
+	mockStore.EXPECT().List(ctx, objType, (*types.Paging)(nil)).Return(expectedResources, nil)
 
 	// Test
 	result, err := repo.List(ctx, objType)
@@ -105,9 +105,9 @@ func TestResourceRepository_MarkDeleted(t *testing.T) {
 	mockStore := mocks.NewMockResourceStore(t)
 	mockClient := mocks.NewMockClientWrapper(t)
 	backoffManager := &lib.BackoffManager{}
-	watchConfig := repository.WatchConfig{}
+	watchConfig := types.WatchConfig{}
 
-	repo := repository.NewResourceRepository(logger, mockStore, mockClient, watchConfig, backoffManager)
+	repo := NewResourceRepository(logger, mockStore, mockClient, watchConfig, backoffManager)
 
 	ctx := context.Background()
 	key := sdkmeta.ObjectKey{

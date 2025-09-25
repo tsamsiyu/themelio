@@ -10,22 +10,16 @@ import (
 	"go.uber.org/zap"
 
 	internalerrors "github.com/tsamsiyu/themelio/api/internal/errors"
+	"github.com/tsamsiyu/themelio/api/internal/repository/types"
 	sdkschema "github.com/tsamsiyu/themelio/sdk/pkg/types/schema"
 )
-
-type SchemaRepository interface {
-	StoreSchema(ctx context.Context, schema *sdkschema.ObjectSchema) error
-	GetSchema(ctx context.Context, group, kind string) (*sdkschema.ObjectSchema, error)
-	DeleteSchema(ctx context.Context, group, kind string) error
-	ListSchemas(ctx context.Context) ([]*sdkschema.ObjectSchema, error)
-}
 
 type schemaRepository struct {
 	logger     *zap.Logger
 	etcdClient *clientv3.Client
 }
 
-func NewSchemaRepository(logger *zap.Logger, etcdClient *clientv3.Client) SchemaRepository {
+func NewSchemaRepository(logger *zap.Logger, etcdClient *clientv3.Client) types.SchemaRepository {
 	return &schemaRepository{
 		logger:     logger,
 		etcdClient: etcdClient,

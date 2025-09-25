@@ -1,4 +1,4 @@
-package repository_test
+package repository
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/tsamsiyu/themelio/api/internal/lib"
-	"github.com/tsamsiyu/themelio/api/internal/repository"
+	"github.com/tsamsiyu/themelio/api/internal/repository/types"
 	"github.com/tsamsiyu/themelio/api/mocks"
 	sdkmeta "github.com/tsamsiyu/themelio/sdk/pkg/types/meta"
 )
@@ -20,9 +20,9 @@ func TestResourceRepository_Delete_ResourceWithoutOwnerReferences(t *testing.T) 
 	mockStore := mocks.NewMockResourceStore(t)
 	mockClient := mocks.NewMockClientWrapper(t)
 	backoffManager := &lib.BackoffManager{}
-	watchConfig := repository.WatchConfig{}
+	watchConfig := types.WatchConfig{}
 
-	repo := repository.NewResourceRepository(logger, mockStore, mockClient, watchConfig, backoffManager)
+	repo := NewResourceRepository(logger, mockStore, mockClient, watchConfig, backoffManager)
 
 	ctx := context.Background()
 	key := sdkmeta.ObjectKey{
@@ -52,7 +52,7 @@ func TestResourceRepository_Delete_ResourceWithoutOwnerReferences(t *testing.T) 
 	// Given: A resource without owner references
 	mockStore.EXPECT().Get(ctx, key).Return(resource, nil)
 	indexPrefix := "/index/owner-reference//example.com/v1/TestResource/default/test-resource"
-	mockClient.EXPECT().List(ctx, repository.Paging{Prefix: indexPrefix}).Return(&repository.Batch{KVs: []repository.KeyValue{}}, nil)
+	mockClient.EXPECT().List(ctx, types.Paging{Prefix: indexPrefix}).Return(&types.Batch{KVs: []types.KeyValue{}}, nil)
 
 	// Mock etcd client and transaction
 	mockEtcdClient := mocks.NewMockEtcdClientInterface(t)
@@ -75,9 +75,9 @@ func TestResourceRepository_Delete_ResourceWithOwnerReferences(t *testing.T) {
 	mockStore := mocks.NewMockResourceStore(t)
 	mockClient := mocks.NewMockClientWrapper(t)
 	backoffManager := &lib.BackoffManager{}
-	watchConfig := repository.WatchConfig{}
+	watchConfig := types.WatchConfig{}
 
-	repo := repository.NewResourceRepository(logger, mockStore, mockClient, watchConfig, backoffManager)
+	repo := NewResourceRepository(logger, mockStore, mockClient, watchConfig, backoffManager)
 
 	ctx := context.Background()
 	key := sdkmeta.ObjectKey{
@@ -130,7 +130,7 @@ func TestResourceRepository_Delete_ResourceWithOwnerReferences(t *testing.T) {
 	// Given: A resource with owner references
 	mockStore.EXPECT().Get(ctx, key).Return(resource, nil)
 	indexPrefix := "/index/owner-reference//example.com/v1/TestResource/default/test-resource"
-	mockClient.EXPECT().List(ctx, repository.Paging{Prefix: indexPrefix}).Return(&repository.Batch{KVs: []repository.KeyValue{}}, nil)
+	mockClient.EXPECT().List(ctx, types.Paging{Prefix: indexPrefix}).Return(&types.Batch{KVs: []types.KeyValue{}}, nil)
 
 	// Mock etcd client and transaction
 	mockEtcdClient := mocks.NewMockEtcdClientInterface(t)
@@ -153,9 +153,9 @@ func TestResourceRepository_Delete_ResourceWithChildResources(t *testing.T) {
 	mockStore := mocks.NewMockResourceStore(t)
 	mockClient := mocks.NewMockClientWrapper(t)
 	backoffManager := &lib.BackoffManager{}
-	watchConfig := repository.WatchConfig{}
+	watchConfig := types.WatchConfig{}
 
-	repo := repository.NewResourceRepository(logger, mockStore, mockClient, watchConfig, backoffManager)
+	repo := NewResourceRepository(logger, mockStore, mockClient, watchConfig, backoffManager)
 
 	ctx := context.Background()
 	key := sdkmeta.ObjectKey{
@@ -185,7 +185,7 @@ func TestResourceRepository_Delete_ResourceWithChildResources(t *testing.T) {
 	// Given: A resource that might have child resources
 	mockStore.EXPECT().Get(ctx, key).Return(resource, nil)
 	indexPrefix := "/index/owner-reference//example.com/v1/TestResource/default/parent-resource"
-	mockClient.EXPECT().List(ctx, repository.Paging{Prefix: indexPrefix}).Return(&repository.Batch{KVs: []repository.KeyValue{}}, nil)
+	mockClient.EXPECT().List(ctx, types.Paging{Prefix: indexPrefix}).Return(&types.Batch{KVs: []types.KeyValue{}}, nil)
 
 	// Mock etcd client and transaction
 	mockEtcdClient := mocks.NewMockEtcdClientInterface(t)
@@ -208,9 +208,9 @@ func TestResourceRepository_Delete_ResourceNotFound(t *testing.T) {
 	mockStore := mocks.NewMockResourceStore(t)
 	mockClient := mocks.NewMockClientWrapper(t)
 	backoffManager := &lib.BackoffManager{}
-	watchConfig := repository.WatchConfig{}
+	watchConfig := types.WatchConfig{}
 
-	repo := repository.NewResourceRepository(logger, mockStore, mockClient, watchConfig, backoffManager)
+	repo := NewResourceRepository(logger, mockStore, mockClient, watchConfig, backoffManager)
 
 	ctx := context.Background()
 	key := sdkmeta.ObjectKey{
@@ -224,7 +224,7 @@ func TestResourceRepository_Delete_ResourceNotFound(t *testing.T) {
 	}
 
 	// Given: A resource that does not exist
-	mockStore.EXPECT().Get(ctx, key).Return(nil, repository.NewNotFoundError("resource not found"))
+	mockStore.EXPECT().Get(ctx, key).Return(nil, NewNotFoundError("resource not found"))
 
 	// When: Attempting to delete the resource
 	err := repo.Delete(ctx, key, "test-lock")
@@ -239,9 +239,9 @@ func TestResourceRepository_Delete_ErrorDuringOwnerReferenceCleanup(t *testing.T
 	mockStore := mocks.NewMockResourceStore(t)
 	mockClient := mocks.NewMockClientWrapper(t)
 	backoffManager := &lib.BackoffManager{}
-	watchConfig := repository.WatchConfig{}
+	watchConfig := types.WatchConfig{}
 
-	repo := repository.NewResourceRepository(logger, mockStore, mockClient, watchConfig, backoffManager)
+	repo := NewResourceRepository(logger, mockStore, mockClient, watchConfig, backoffManager)
 
 	ctx := context.Background()
 	key := sdkmeta.ObjectKey{
@@ -283,7 +283,7 @@ func TestResourceRepository_Delete_ErrorDuringOwnerReferenceCleanup(t *testing.T
 	// Given: A resource with owner references and a failing child query
 	mockStore.EXPECT().Get(ctx, key).Return(resource, nil)
 	indexPrefix := "/index/owner-reference//example.com/v1/TestResource/default/test-resource"
-	mockClient.EXPECT().List(ctx, repository.Paging{Prefix: indexPrefix}).Return(nil, assert.AnError)
+	mockClient.EXPECT().List(ctx, types.Paging{Prefix: indexPrefix}).Return(nil, assert.AnError)
 
 	// When: Attempting to delete the resource
 	err := repo.Delete(ctx, key, "test-lock")

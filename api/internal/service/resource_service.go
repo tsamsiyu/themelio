@@ -9,7 +9,7 @@ import (
 	"go.uber.org/zap"
 
 	internalerrors "github.com/tsamsiyu/themelio/api/internal/errors"
-	"github.com/tsamsiyu/themelio/api/internal/repository"
+	"github.com/tsamsiyu/themelio/api/internal/repository/types"
 	sharedservice "github.com/tsamsiyu/themelio/api/internal/service/shared"
 	sdkmeta "github.com/tsamsiyu/themelio/sdk/pkg/types/meta"
 	sdkschema "github.com/tsamsiyu/themelio/sdk/pkg/types/schema"
@@ -40,11 +40,11 @@ type ResourceService interface {
 
 type resourceService struct {
 	logger        *zap.Logger
-	repo          repository.ResourceRepository
+	repo          types.ResourceRepository
 	schemaService sharedservice.SchemaService
 }
 
-func NewResourceService(logger *zap.Logger, repo repository.ResourceRepository, schemaService sharedservice.SchemaService) ResourceService {
+func NewResourceService(logger *zap.Logger, repo types.ResourceRepository, schemaService sharedservice.SchemaService) ResourceService {
 	return &resourceService{
 		logger:        logger,
 		repo:          repo,
