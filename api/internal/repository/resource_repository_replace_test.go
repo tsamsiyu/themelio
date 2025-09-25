@@ -51,10 +51,17 @@ func TestResourceRepository_Replace_NewResource(t *testing.T) {
 	// Given: A new resource that doesn't exist yet
 	mockStore.EXPECT().Get(ctx, key).Return(nil, repository.NewNotFoundError("resource not found"))
 	mockStore.EXPECT().BuildPutTxOp(resource).Return(clientv3.OpPut("/example.com/v1/TestResource/default/new-resource", "{}"), nil)
-	mockClient.EXPECT().ExecuteTransaction(ctx, mock.Anything).Return(nil)
+
+	// Mock etcd client and transaction
+	mockEtcdClient := mocks.NewMockEtcdClientInterface(t)
+	mockTxn := mocks.NewMockTxn(t)
+	mockEtcdClient.EXPECT().Txn(ctx).Return(mockTxn)
+	mockTxn.EXPECT().Then(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(mockTxn)
+	mockTxn.EXPECT().Commit().Return(&clientv3.TxnResponse{Succeeded: true}, nil)
+	mockClient.EXPECT().Client().Return(mockEtcdClient)
 
 	// When: Creating the new resource
-	err := repo.Replace(ctx, resource)
+	err := repo.Replace(ctx, resource, false)
 
 	// Then: The creation should succeed
 	assert.NoError(t, err)
@@ -109,10 +116,17 @@ func TestResourceRepository_Replace_NewResource_WithOwnerReferences(t *testing.T
 	// Given: A new resource with owner references that doesn't exist yet
 	mockStore.EXPECT().Get(ctx, key).Return(nil, repository.NewNotFoundError("resource not found"))
 	mockStore.EXPECT().BuildPutTxOp(resource).Return(clientv3.OpPut("/example.com/v1/TestResource/default/new-resource", "{}"), nil)
-	mockClient.EXPECT().ExecuteTransaction(ctx, mock.Anything).Return(nil)
+
+	// Mock etcd client and transaction
+	mockEtcdClient := mocks.NewMockEtcdClientInterface(t)
+	mockTxn := mocks.NewMockTxn(t)
+	mockEtcdClient.EXPECT().Txn(ctx).Return(mockTxn)
+	mockTxn.EXPECT().Then(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(mockTxn)
+	mockTxn.EXPECT().Commit().Return(&clientv3.TxnResponse{Succeeded: true}, nil)
+	mockClient.EXPECT().Client().Return(mockEtcdClient)
 
 	// When: Creating the new resource with owner references
-	err := repo.Replace(ctx, resource)
+	err := repo.Replace(ctx, resource, false)
 
 	// Then: The creation should succeed
 	assert.NoError(t, err)
@@ -197,10 +211,17 @@ func TestResourceRepository_Replace_UpdateExistingResource(t *testing.T) {
 	// Given: An existing resource with different owner references
 	mockStore.EXPECT().Get(ctx, key).Return(existingResource, nil)
 	mockStore.EXPECT().BuildPutTxOp(newResource).Return(clientv3.OpPut("/example.com/v1/TestResource/default/test-resource", "{}"), nil)
-	mockClient.EXPECT().ExecuteTransaction(ctx, mock.Anything).Return(nil)
+
+	// Mock etcd client and transaction
+	mockEtcdClient := mocks.NewMockEtcdClientInterface(t)
+	mockTxn := mocks.NewMockTxn(t)
+	mockEtcdClient.EXPECT().Txn(ctx).Return(mockTxn)
+	mockTxn.EXPECT().Then(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(mockTxn)
+	mockTxn.EXPECT().Commit().Return(&clientv3.TxnResponse{Succeeded: true}, nil)
+	mockClient.EXPECT().Client().Return(mockEtcdClient)
 
 	// When: Updating the resource with new owner references
-	err := repo.Replace(ctx, newResource)
+	err := repo.Replace(ctx, newResource, false)
 
 	// Then: The update should succeed
 	assert.NoError(t, err)
@@ -285,10 +306,17 @@ func TestResourceRepository_Replace_NoOwnerReferenceChanges(t *testing.T) {
 	// Given: An existing resource with unchanged owner references
 	mockStore.EXPECT().Get(ctx, key).Return(existingResource, nil)
 	mockStore.EXPECT().BuildPutTxOp(newResource).Return(clientv3.OpPut("/example.com/v1/TestResource/default/test-resource", "{}"), nil)
-	mockClient.EXPECT().ExecuteTransaction(ctx, mock.Anything).Return(nil)
+
+	// Mock etcd client and transaction
+	mockEtcdClient := mocks.NewMockEtcdClientInterface(t)
+	mockTxn := mocks.NewMockTxn(t)
+	mockEtcdClient.EXPECT().Txn(ctx).Return(mockTxn)
+	mockTxn.EXPECT().Then(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(mockTxn)
+	mockTxn.EXPECT().Commit().Return(&clientv3.TxnResponse{Succeeded: true}, nil)
+	mockClient.EXPECT().Client().Return(mockEtcdClient)
 
 	// When: Updating the resource without changing owner references
-	err := repo.Replace(ctx, newResource)
+	err := repo.Replace(ctx, newResource, false)
 
 	// Then: The update should succeed
 	assert.NoError(t, err)

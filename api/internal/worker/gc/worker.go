@@ -30,7 +30,7 @@ func DefaultConfig() *Config {
 	return &Config{
 		PollInterval: 1 * time.Second,
 		Workers:      3,
-		LockKey:      "gc-worker",
+		LockKey:      "gc-worker", // todo: generate randomly
 		LockExp:      5 * time.Minute,
 		BatchLimit:   10,
 	}
@@ -181,7 +181,7 @@ func (w *Worker) processDeletionEvent(ctx context.Context, event DeletionEvent, 
 		return
 	}
 
-	err = w.repo.Delete(ctx, event.ObjectKey)
+	err = w.repo.Delete(ctx, event.ObjectKey, w.config.LockKey)
 	if err != nil {
 		w.logger.Error("Failed to delete resource", zap.Any("objectKey", event.ObjectKey), zap.Error(err))
 		return

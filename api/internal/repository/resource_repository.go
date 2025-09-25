@@ -13,10 +13,10 @@ import (
 )
 
 type ResourceRepository interface {
-	Replace(ctx context.Context, obj *sdkmeta.Object) error
+	Replace(ctx context.Context, obj *sdkmeta.Object, optimisticLock bool) error
 	Get(ctx context.Context, key sdkmeta.ObjectKey) (*sdkmeta.Object, error)
 	List(ctx context.Context, objType *sdkmeta.ObjectType, limit int) ([]*sdkmeta.Object, error)
-	Delete(ctx context.Context, key sdkmeta.ObjectKey) error
+	Delete(ctx context.Context, key sdkmeta.ObjectKey, lockValue string) error
 	Watch(ctx context.Context, objType *sdkmeta.ObjectType, eventChan chan<- WatchEvent) error
 	MarkDeleted(ctx context.Context, key sdkmeta.ObjectKey) error
 	ListDeletions(ctx context.Context, lockKey string, lockExp time.Duration, batchLimit int) (*DeletionBatch, error)
@@ -45,21 +45,13 @@ func NewResourceRepository(logger *zap.Logger, store ResourceStore, clientWrappe
 	}
 }
 
-func (r *resourceRepository) Replace(ctx context.Context, obj *sdkmeta.Object) error {
-	oldResource, err := r.store.Get(ctx, *obj.ObjectKey)
+func (r *resourceRepository) Replace(ctx context.Context, obj *sdkmeta.Object, optimisticLock bool) error {
+	oldObj, err := r.store.Get(ctx, *obj.ObjectKey)
 	if err != nil && !IsNotFoundError(err) {
 		return err
 	}
 
-	now := time.Now()
-
-	if obj.SystemMeta == nil {
-		obj.SystemMeta = &sdkmeta.SystemMeta{
-			UID:               "TODO",
-			Revision:          "TODO",
-			CreationTimestamp: &now,
-		}
-	}
+	beforeSave(oldObj, obj)
 
 	putOp, err := r.store.BuildPutTxOp(obj)
 	if err != nil {
@@ -67,8 +59,8 @@ func (r *resourceRepository) Replace(ctx context.Context, obj *sdkmeta.Object) e
 	}
 
 	var oldOwnerRefs []sdkmeta.OwnerReference
-	if oldResource != nil {
-		oldOwnerRefs = oldResource.ObjectMeta.OwnerReferences
+	if oldObj != nil {
+		oldOwnerRefs = oldObj.ObjectMeta.OwnerReferences
 	}
 
 	ownerRefOps := r.ownerRefOpBuilder.BuildIndexesUpdateOps(
@@ -77,10 +69,20 @@ func (r *resourceRepository) Replace(ctx context.Context, obj *sdkmeta.Object) e
 		obj.ObjectMeta.OwnerReferences,
 	)
 
-	ops := []clientv3.Op{putOp}
+	txn := r.clientWrapper.Client().Txn(ctx)
+
+	ops := []clientv3.Op{}
+	ops = append(ops, putOp)
 	ops = append(ops, ownerRefOps...)
 
-	return r.clientWrapper.ExecuteTransaction(ctx, ops)
+	if optimisticLock && oldObj != nil {
+		onlyIfOp := clientv3.Compare(clientv3.Value(objectKeyToDbKey(*obj.ObjectKey)), "=", obj.SystemMeta.Version)
+		_, err = txn.If(onlyIfOp).Then(ops...).Commit()
+		return err
+	}
+
+	_, err = txn.Then(ops...).Commit()
+	return err
 }
 
 func (r *resourceRepository) Get(ctx context.Context, key sdkmeta.ObjectKey) (*sdkmeta.Object, error) {
@@ -91,8 +93,7 @@ func (r *resourceRepository) List(ctx context.Context, objType *sdkmeta.ObjectTy
 	return r.store.List(ctx, objType, limit)
 }
 
-// TODO: allow deleting only if lock is still valid
-func (r *resourceRepository) Delete(ctx context.Context, key sdkmeta.ObjectKey) error {
+func (r *resourceRepository) Delete(ctx context.Context, key sdkmeta.ObjectKey, lockValue string) error {
 	obj, err := r.store.Get(ctx, key)
 	if err != nil {
 		return err
@@ -110,12 +111,17 @@ func (r *resourceRepository) Delete(ctx context.Context, key sdkmeta.ObjectKey) 
 		return errors.Wrap(err, "failed to create children cleanup operations")
 	}
 
+	ifLockedByItselfOp := clientv3.Compare(clientv3.Value(deletionLockDbKey(key)), "=", lockValue)
+
 	var ops []clientv3.Op
 	ops = append(ops, clientv3.OpDelete(objectKeyToDbKey(key)))
+	ops = append(ops, clientv3.OpDelete(deletionLockDbKey(key)))
 	ops = append(ops, ownerReferenceIndexesCleanupOps...)
 	ops = append(ops, childrenCleanupOps...)
 
-	return r.clientWrapper.ExecuteTransaction(ctx, ops)
+	txn := r.clientWrapper.Client().Txn(ctx)
+	_, err = txn.If(ifLockedByItselfOp).Then(ops...).Commit()
+	return err
 }
 
 func (r *resourceRepository) Watch(ctx context.Context, objType *sdkmeta.ObjectType, eventChan chan<- WatchEvent) error {
@@ -140,12 +146,12 @@ func (r *resourceRepository) MarkDeleted(ctx context.Context, key sdkmeta.Object
 		return errors.Wrap(err, "failed to get resource for deletion marking")
 	}
 
-	if resource.SystemMeta.DeletionTimestamp != nil {
+	if resource.SystemMeta.DeletionTime != nil {
 		return nil // Already marked for deletion
 	}
 
 	now := time.Now()
-	resource.SystemMeta.DeletionTimestamp = &now
+	resource.SystemMeta.DeletionTime = &now
 
 	deletionOp, err := r.deletionOpBuilder.BuildMarkDeletionOperation(key)
 	if err != nil {
@@ -157,10 +163,22 @@ func (r *resourceRepository) MarkDeleted(ctx context.Context, key sdkmeta.Object
 		return errors.Wrap(err, "failed to build set operation for resource with deletion timestamp")
 	}
 
-	return r.clientWrapper.ExecuteTransaction(ctx, []clientv3.Op{*deletionOp, updateOp})
+	txn := r.clientWrapper.Client().Txn(ctx)
+	_, err = txn.Then([]clientv3.Op{*deletionOp, updateOp}...).Commit()
+	return err
 }
 
 // ListDeletions returns a batch of resources marked for deletion using distributed locking
 func (r *resourceRepository) ListDeletions(ctx context.Context, lockKey string, lockExp time.Duration, batchLimit int) (*DeletionBatch, error) {
 	return r.deletionOpBuilder.AcquireDeletions(ctx, lockKey, lockExp, batchLimit)
+}
+
+func beforeSave(oldResource *sdkmeta.Object, newResource *sdkmeta.Object) {
+	now := time.Now()
+
+	if oldResource == nil {
+		newResource.SystemMeta.CreationTime = &now
+	} else {
+		newResource.SystemMeta.LastUpdateTime = &now
+	}
 }

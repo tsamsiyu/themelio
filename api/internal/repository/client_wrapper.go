@@ -16,15 +16,13 @@ type KeyValue struct {
 
 // ClientWrapper provides a thin generic wrapper over etcd client
 type ClientWrapper interface {
+	Client() EtcdClientInterface
+
 	// Basic CRUD operations with raw data
 	Put(ctx context.Context, key string, value string) error
 	Get(ctx context.Context, key string) ([]byte, error)
 	Delete(ctx context.Context, key string) error
 	List(ctx context.Context, prefix string, limit int) ([]KeyValue, error)
-
-	// Transaction execution
-	ExecuteTransaction(ctx context.Context, ops []clientv3.Op) error
-	ExecuteConditionalTransaction(ctx context.Context, compare []clientv3.Cmp, successOps []clientv3.Op, failureOps []clientv3.Op) (*clientv3.TxnResponse, error)
 
 	// Lease management
 	GrantLease(ctx context.Context, ttl int64) (*clientv3.LeaseGrantResponse, error)
@@ -47,7 +45,19 @@ func NewClientWrapper(logger *zap.Logger, client *clientv3.Client) ClientWrapper
 	}
 }
 
-// ClientWrapper implementation
+func (c *clientWrapper) Client() EtcdClientInterface {
+	return &etcdClientAdapter{client: c.client}
+}
+
+// etcdClientAdapter adapts *clientv3.Client to EtcdClientInterface
+type etcdClientAdapter struct {
+	client *clientv3.Client
+}
+
+func (a *etcdClientAdapter) Txn(ctx context.Context) clientv3.Txn {
+	return a.client.Txn(ctx)
+}
+
 func (c *clientWrapper) Put(ctx context.Context, key string, value string) error {
 	_, err := c.client.Put(ctx, key, value)
 	return err
@@ -94,18 +104,18 @@ func (c *clientWrapper) List(ctx context.Context, prefix string, limit int) ([]K
 	return kvs, nil
 }
 
-func (c *clientWrapper) ExecuteTransaction(ctx context.Context, ops []clientv3.Op) error {
+func (c *clientWrapper) ExecuteTransaction(ctx context.Context, ops []clientv3.Op) (*clientv3.TxnResponse, error) {
 	txn := c.client.Txn(ctx)
 	txnResp, err := txn.Then(ops...).Commit()
 	if err != nil {
-		return errors.Wrap(err, "failed to execute transaction")
+		return nil, errors.Wrap(err, "failed to execute transaction")
 	}
 
 	if !txnResp.Succeeded {
-		return errors.New("transaction failed")
+		return nil, errors.New("transaction failed")
 	}
 
-	return nil
+	return txnResp, nil
 }
 
 func (c *clientWrapper) ExecuteConditionalTransaction(ctx context.Context, compare []clientv3.Cmp, successOps []clientv3.Op, failureOps []clientv3.Op) (*clientv3.TxnResponse, error) {

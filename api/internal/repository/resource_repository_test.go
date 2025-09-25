@@ -131,7 +131,14 @@ func TestResourceRepository_MarkDeleted(t *testing.T) {
 	// Mock expectations - simplified to match actual behavior
 	mockStore.EXPECT().Get(ctx, key).Return(resource, nil)
 	mockStore.EXPECT().BuildPutTxOp(mock.Anything).Return(clientv3.OpPut("/example.com/v1/TestResource/default/test-resource", "{}"), nil)
-	mockClient.EXPECT().ExecuteTransaction(ctx, mock.Anything).Return(nil)
+
+	// Mock etcd client and transaction
+	mockEtcdClient := mocks.NewMockEtcdClientInterface(t)
+	mockTxn := mocks.NewMockTxn(t)
+	mockEtcdClient.EXPECT().Txn(ctx).Return(mockTxn)
+	mockTxn.EXPECT().Then(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(mockTxn)
+	mockTxn.EXPECT().Commit().Return(&clientv3.TxnResponse{Succeeded: true}, nil)
+	mockClient.EXPECT().Client().Return(mockEtcdClient)
 
 	// Test
 	err := repo.MarkDeleted(ctx, key)

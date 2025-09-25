@@ -70,7 +70,7 @@ func (s *resourceService) ReplaceResource(ctx context.Context, params Params, js
 		return err
 	}
 
-	if err := s.repo.Replace(ctx, payload); err != nil {
+	if err := s.repo.Replace(ctx, payload, true); err != nil {
 		return err
 	}
 
@@ -158,7 +158,7 @@ func (s *resourceService) PatchResource(ctx context.Context, params Params, patc
 		return nil, err
 	}
 
-	if err := s.repo.Replace(ctx, patchedResource); err != nil {
+	if err := s.repo.Replace(ctx, patchedResource, false); err != nil {
 		return nil, err
 	}
 
@@ -194,29 +194,14 @@ func (s *resourceService) validatePatchOperations(patch jsonpatch.Patch) error {
 }
 
 func getObjectKeyFromParams(schema *sdkschema.ObjectSchema, params *Params) (sdkmeta.ObjectKey, error) {
-	if schema.Scope == sdkschema.ResourceScopeCluster {
-		return sdkmeta.ObjectKey{
-			ObjectType: sdkmeta.ObjectType{
-				Group:   params.Group,
-				Version: params.Version,
-				Kind:    params.Kind,
-			},
-			Name: params.Name,
-		}, nil
-	}
-
-	if params.Namespace == "" {
-		return sdkmeta.ObjectKey{}, internalerrors.NewInvalidInputError("namespace is required for namespaced resource")
+	objType, err := getObjectTypeFromParams(schema, params)
+	if err != nil {
+		return sdkmeta.ObjectKey{}, err
 	}
 
 	return sdkmeta.ObjectKey{
-		ObjectType: sdkmeta.ObjectType{
-			Group:     params.Group,
-			Version:   params.Version,
-			Kind:      params.Kind,
-			Namespace: params.Namespace,
-		},
-		Name: params.Name,
+		ObjectType: *objType,
+		Name:       params.Name,
 	}, nil
 }
 

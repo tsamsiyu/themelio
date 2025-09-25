@@ -138,10 +138,10 @@ func parseOwnerReferenceIndexDbKey(dbKey string) (sdkmeta.ObjectKey, sdkmeta.Obj
 
 func CalculateOwnerReferenceDiff(oldOwnerRefs, newOwnerRefs []sdkmeta.OwnerReference) ([]sdkmeta.OwnerReference, []sdkmeta.OwnerReference) {
 	if oldOwnerRefs == nil {
-		oldOwnerRefs = []sdkmeta.OwnerReference{}
+		oldOwnerRefs = make([]sdkmeta.OwnerReference, 0)
 	}
 	if newOwnerRefs == nil {
-		newOwnerRefs = []sdkmeta.OwnerReference{}
+		newOwnerRefs = make([]sdkmeta.OwnerReference, 0)
 	}
 
 	oldMap := make(map[string]sdkmeta.OwnerReference)

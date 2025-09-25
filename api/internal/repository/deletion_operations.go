@@ -148,24 +148,27 @@ func (b *DeletionOpBuilder) AcquireDeletions(ctx context.Context, lockKey string
 	var objectKeys []sdkmeta.ObjectKey
 
 	for key := range deletions {
-		var txnResp *clientv3.TxnResponse
-		var err error
+		txn := b.clientWrapper.Client().Txn(ctx)
+		deletionLockDbKey := deletionLockDbKey(key)
 
-		lockEtcdKey := deletionLockDbKey(key)
+		ifLockDoesNotExistOp := []clientv3.Cmp{clientv3.Compare(clientv3.Version(deletionLockDbKey), "=", 0)}
+		ifLockedByItselfOp := []clientv3.Cmp{clientv3.Compare(clientv3.Value(deletionLockDbKey), "=", lockKey)}
+		leaseOp := []clientv3.Op{clientv3.OpPut(deletionLockDbKey, lockKey, clientv3.WithLease(leaseResp.ID))}
 
-		noLockCompareOp := []clientv3.Cmp{clientv3.Compare(clientv3.Version(lockEtcdKey), "=", 0)}
-		leaseOp := []clientv3.Op{clientv3.OpPut(lockEtcdKey, lockKey, clientv3.WithLease(leaseResp.ID))}
-
-		txnResp, err = b.clientWrapper.ExecuteConditionalTransaction(ctx, noLockCompareOp, leaseOp, nil)
-		if err == nil && txnResp.Succeeded {
+		txnResp, err := txn.If(ifLockDoesNotExistOp...).Then(leaseOp...).Commit()
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to acquire deletion lock")
+		}
+		if txnResp.Succeeded {
 			objectKeys = append(objectKeys, key)
 			continue
 		}
 
-		lockedByItselfCompareOp := []clientv3.Cmp{clientv3.Compare(clientv3.Value(lockEtcdKey), "=", lockKey)}
-
-		txnResp, err = b.clientWrapper.ExecuteConditionalTransaction(ctx, lockedByItselfCompareOp, leaseOp, nil)
-		if err == nil && txnResp.Succeeded {
+		txnResp, err = txn.If(ifLockedByItselfOp...).Then(leaseOp...).Commit()
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to acquire deletion lock")
+		}
+		if txnResp.Succeeded {
 			objectKeys = append(objectKeys, key)
 		}
 	}

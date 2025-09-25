@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 
 	"github.com/tsamsiyu/themelio/api/internal/lib"
@@ -52,10 +53,18 @@ func TestResourceRepository_Delete_ResourceWithoutOwnerReferences(t *testing.T) 
 	mockStore.EXPECT().Get(ctx, key).Return(resource, nil)
 	indexPrefix := "/index/owner-reference//example.com/v1/TestResource/default/test-resource"
 	mockClient.EXPECT().List(ctx, indexPrefix, -1).Return([]repository.KeyValue{}, nil)
-	mockClient.EXPECT().ExecuteTransaction(ctx, mock.Anything).Return(nil)
+
+	// Mock etcd client and transaction
+	mockEtcdClient := mocks.NewMockEtcdClientInterface(t)
+	mockTxn := mocks.NewMockTxn(t)
+	mockEtcdClient.EXPECT().Txn(ctx).Return(mockTxn)
+	mockTxn.EXPECT().If(mock.Anything).Return(mockTxn)
+	mockTxn.EXPECT().Then(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(mockTxn)
+	mockTxn.EXPECT().Commit().Return(&clientv3.TxnResponse{Succeeded: true}, nil)
+	mockClient.EXPECT().Client().Return(mockEtcdClient)
 
 	// When: Deleting the resource
-	err := repo.Delete(ctx, key)
+	err := repo.Delete(ctx, key, "test-lock")
 
 	// Then: The deletion should succeed
 	assert.NoError(t, err)
@@ -122,10 +131,18 @@ func TestResourceRepository_Delete_ResourceWithOwnerReferences(t *testing.T) {
 	mockStore.EXPECT().Get(ctx, key).Return(resource, nil)
 	indexPrefix := "/index/owner-reference//example.com/v1/TestResource/default/test-resource"
 	mockClient.EXPECT().List(ctx, indexPrefix, -1).Return([]repository.KeyValue{}, nil)
-	mockClient.EXPECT().ExecuteTransaction(ctx, mock.Anything).Return(nil)
+
+	// Mock etcd client and transaction
+	mockEtcdClient := mocks.NewMockEtcdClientInterface(t)
+	mockTxn := mocks.NewMockTxn(t)
+	mockEtcdClient.EXPECT().Txn(ctx).Return(mockTxn)
+	mockTxn.EXPECT().If(mock.Anything).Return(mockTxn)
+	mockTxn.EXPECT().Then(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(mockTxn)
+	mockTxn.EXPECT().Commit().Return(&clientv3.TxnResponse{Succeeded: true}, nil)
+	mockClient.EXPECT().Client().Return(mockEtcdClient)
 
 	// When: Deleting the resource
-	err := repo.Delete(ctx, key)
+	err := repo.Delete(ctx, key, "test-lock")
 
 	// Then: The deletion should succeed
 	assert.NoError(t, err)
@@ -169,10 +186,18 @@ func TestResourceRepository_Delete_ResourceWithChildResources(t *testing.T) {
 	mockStore.EXPECT().Get(ctx, key).Return(resource, nil)
 	indexPrefix := "/index/owner-reference//example.com/v1/TestResource/default/parent-resource"
 	mockClient.EXPECT().List(ctx, indexPrefix, -1).Return([]repository.KeyValue{}, nil)
-	mockClient.EXPECT().ExecuteTransaction(ctx, mock.Anything).Return(nil)
+
+	// Mock etcd client and transaction
+	mockEtcdClient := mocks.NewMockEtcdClientInterface(t)
+	mockTxn := mocks.NewMockTxn(t)
+	mockEtcdClient.EXPECT().Txn(ctx).Return(mockTxn)
+	mockTxn.EXPECT().If(mock.Anything).Return(mockTxn)
+	mockTxn.EXPECT().Then(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(mockTxn)
+	mockTxn.EXPECT().Commit().Return(&clientv3.TxnResponse{Succeeded: true}, nil)
+	mockClient.EXPECT().Client().Return(mockEtcdClient)
 
 	// When: Deleting the resource
-	err := repo.Delete(ctx, key)
+	err := repo.Delete(ctx, key, "test-lock")
 
 	// Then: The deletion should succeed
 	assert.NoError(t, err)
@@ -202,7 +227,7 @@ func TestResourceRepository_Delete_ResourceNotFound(t *testing.T) {
 	mockStore.EXPECT().Get(ctx, key).Return(nil, repository.NewNotFoundError("resource not found"))
 
 	// When: Attempting to delete the resource
-	err := repo.Delete(ctx, key)
+	err := repo.Delete(ctx, key, "test-lock")
 
 	// Then: An error should be returned
 	assert.Error(t, err)
@@ -261,7 +286,7 @@ func TestResourceRepository_Delete_ErrorDuringOwnerReferenceCleanup(t *testing.T
 	mockClient.EXPECT().List(ctx, indexPrefix, -1).Return(nil, assert.AnError)
 
 	// When: Attempting to delete the resource
-	err := repo.Delete(ctx, key)
+	err := repo.Delete(ctx, key, "test-lock")
 
 	// Then: An error should be returned
 	assert.Error(t, err)

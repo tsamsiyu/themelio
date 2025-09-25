@@ -13,6 +13,11 @@ packages:
       ClientWrapper:
       ResourceStore:
       SchemaRepository:
+      EtcdClientInterface:
   github.com/tsamsiyu/themelio/api/internal/service/shared:
     interfaces:
       SchemaService:
+  go.etcd.io/etcd/client/v3:
+    interfaces:
+      Txn:
+      KV:

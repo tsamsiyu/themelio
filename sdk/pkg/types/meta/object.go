@@ -22,10 +22,11 @@ type ObjectMeta struct {
 }
 
 type SystemMeta struct {
-	UID               string     `json:"uid"`
-	Revision          string     `json:"revision"`
-	CreationTimestamp *time.Time `json:"creationTimestamp"`
-	DeletionTimestamp *time.Time `json:"deletionTimestamp"`
+	UID            string     `json:"uid"`
+	Version        int        `json:"version"`
+	CreationTime   *time.Time `json:"creationTime"`
+	LastUpdateTime *time.Time `json:"lastUpdateTime"`
+	DeletionTime   *time.Time `json:"deletionTime"`
 }
 
 type OwnerReference struct {
