@@ -54,7 +54,7 @@ func (m *WatchManager) Watch(ctx context.Context, objType *sdkmeta.ObjectType) (
 	if !exists {
 		handler := NewWatchHandler(objType, m.store, m.logger, m.config, m.backoff)
 		m.handlers[keyStr] = handler
-		go m.startHandler(ctx, handler)
+		go m.startHandler(ctx, keyStr, handler)
 	}
 
 	m.addClient(keyStr, clientChan)
@@ -64,7 +64,7 @@ func (m *WatchManager) Watch(ctx context.Context, objType *sdkmeta.ObjectType) (
 	return clientChan, nil
 }
 
-func (m *WatchManager) startHandler(ctx context.Context, handler *WatchHandler) {
+func (m *WatchManager) startHandler(ctx context.Context, key string, handler *WatchHandler) {
 	handler.Start(ctx)
 
 	go func() {
@@ -75,17 +75,19 @@ func (m *WatchManager) startHandler(ctx context.Context, handler *WatchHandler) 
 				return
 			case event, ok := <-eventChan:
 				if !ok {
+					m.logger.Warn("Handler event channel closed, cleaning up clients",
+						zap.String("key", key))
+					m.cleanupHandlerClients(key)
 					return
 				}
 
 				if event.Type == types.WatchEventTypeError {
 					m.logger.Error("Handler error",
-						zap.String("key", objectTypeToDbKey(handler.ObjType)),
+						zap.String("key", key),
 						zap.Error(event.Error))
 				}
 
-				// Broadcast event to all clients watching this object type
-				m.broadcastEvent(ctx, objectTypeToDbKey(handler.ObjType), event)
+				m.broadcastEvent(ctx, key, event)
 			}
 		}
 	}()
@@ -105,6 +107,22 @@ func (m *WatchManager) cleanupHandler(
 		defer m.handlersMu.Unlock()
 		delete(m.handlers, key)
 	}
+}
+
+func (m *WatchManager) cleanupHandlerClients(key string) {
+	m.clientsMu.Lock()
+	defer m.clientsMu.Unlock()
+
+	clients := m.clients[key]
+	for _, client := range clients {
+		close(client)
+	}
+
+	delete(m.clients, key)
+
+	m.handlersMu.Lock()
+	defer m.handlersMu.Unlock()
+	delete(m.handlers, key)
 }
 
 func (m *WatchManager) addClient(key string, clientChan chan<- types.WatchEvent) {

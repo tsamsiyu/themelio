@@ -51,6 +51,10 @@ func (h *WatchHandler) EventChannel() <-chan types.WatchEvent {
 	return h.eventChan
 }
 
+func (h *WatchHandler) Close() {
+	close(h.eventChan)
+}
+
 func (h *WatchHandler) SendEvent(ctx context.Context, event types.WatchEvent) {
 	select {
 	case h.eventChan <- event:
@@ -104,7 +108,8 @@ func (h *WatchHandler) watchLoop(ctx context.Context) {
 			h.Logger.Error("Max retries exceeded, stopping watcher",
 				zap.String("key", objectTypeToDbKey(h.ObjType)),
 				zap.Int("retryCount", h.retryCount))
-			return // todo: return specific error to notify caller
+			h.Close()
+			return
 		}
 
 		h.retryCount++
