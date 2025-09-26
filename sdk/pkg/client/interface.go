@@ -2,59 +2,66 @@ package client
 
 import (
 	"context"
-	"io"
+	"time"
+
+	"github.com/tsamsiyu/themelio/sdk/pkg/types/meta"
 )
 
-type GroupVersionKind struct {
-	Group   string `json:"group"`
-	Version string `json:"version"`
-	Kind    string `json:"kind"`
+type Params struct {
+	Group     string
+	Version   string
+	Kind      string
+	Namespace string
+	Name      string
 }
 
-// Client defines the interface for interacting with the Themelio API
+type WatchEventType string
+
+const (
+	WatchEventTypeEvent     WatchEventType = "event"
+	WatchEventTypeConnected WatchEventType = "connected"
+	WatchEventTypeHeartbeat WatchEventType = "heartbeat"
+)
+
+type ResourceEventType string
+
+const (
+	ResourceEventTypeAdded    ResourceEventType = "added"
+	ResourceEventTypeModified ResourceEventType = "modified"
+	ResourceEventTypeDeleted  ResourceEventType = "deleted"
+	ResourceEventTypeError    ResourceEventType = "error"
+)
+
+type ResourceEvent struct {
+	Type      ResourceEventType `json:"type"`
+	Object    *meta.Object      `json:"object,omitempty"`
+	ObjectKey meta.ObjectKey    `json:"objectKey,omitempty"`
+	Timestamp time.Time         `json:"timestamp"`
+	Revision  int64             `json:"revision"`
+	Error     string            `json:"error,omitempty"`
+}
+
+type ConnectedEvent struct {
+	Message   string    `json:"message"`
+	Timestamp time.Time `json:"timestamp"`
+	Revision  int64     `json:"revision"`
+	Params    Params    `json:"params"`
+}
+
+type HeartbeatEvent struct {
+	Timestamp time.Time `json:"timestamp"`
+}
+
+type WatchEvent struct {
+	Type    WatchEventType `json:"type"`
+	Payload interface{}    `json:"payload"`
+}
+
 type Client interface {
-	ReplaceResource(ctx context.Context, gvk GroupVersionKind, resource *Object) error
-	GetResource(ctx context.Context, gvk GroupVersionKind, namespace, name string) (*Object, error)
-	ListResources(ctx context.Context, gvk GroupVersionKind, namespace string) ([]*Object, error)
-	DeleteResource(ctx context.Context, gvk GroupVersionKind, namespace, name string) error
-}
-
-// Config holds configuration for the client
-type Config struct {
-	BaseURL string
-	Timeout int
-	Headers map[string]string
-	TLS     TLSConfig
-}
-
-// TLSConfig holds TLS configuration
-type TLSConfig struct {
-	InsecureSkipVerify bool
-	CertFile           string
-	KeyFile            string
-	CAFile             string
-}
-
-// Response represents a generic API response
-type Response struct {
-	StatusCode int
-	Headers    map[string][]string
-	Body       io.ReadCloser
-}
-
-// ListResponse represents a list response from the API
-type ListResponse struct {
-	Items []*Object `json:"items"`
-	Total int       `json:"total"`
-}
-
-// Error represents a client error
-type Error struct {
-	Message    string
-	StatusCode int
-	Details    map[string]interface{}
-}
-
-func (e *Error) Error() string {
-	return e.Message
+	ReplaceResource(ctx context.Context, params Params, jsonData []byte) error
+	GetResource(ctx context.Context, params Params) (*meta.Object, error)
+	ListResources(ctx context.Context, params Params) ([]*meta.Object, error)
+	DeleteResource(ctx context.Context, params Params) error
+	PatchResource(ctx context.Context, params Params, patchData []byte) (*meta.Object, error)
+	WatchResource(ctx context.Context, params Params, revision int64) (<-chan WatchEvent, error)
 }

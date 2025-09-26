@@ -55,7 +55,8 @@ func TestWatchHandler_WatchResource(t *testing.T) {
 
 	body := w.Body.String()
 	assert.Contains(t, body, "event: connected")
-	assert.Contains(t, body, "event: added")
+	assert.Contains(t, body, "event: event")
+	assert.Contains(t, body, "\"type\":\"added\"")
 }
 
 func TestWatchHandler_WatchResource_WithRevision(t *testing.T) {

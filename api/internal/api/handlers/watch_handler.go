@@ -81,17 +81,21 @@ func (h *WatchHandler) WatchResource(c *gin.Context) {
 		zap.String("namespace", params.Namespace),
 		zap.Int64("revision", revision))
 
-	if err := h.sendSSEEventWithRetry(c, "connected", map[string]interface{}{
-		"message":   "Watch connection established",
-		"timestamp": time.Now().UTC(),
-		"revision":  revision,
-		"params": map[string]interface{}{
-			"group":     params.Group,
-			"version":   params.Version,
-			"kind":      params.Kind,
-			"namespace": params.Namespace,
+	connectedEvent := map[string]interface{}{
+		"type": "connected",
+		"payload": map[string]interface{}{
+			"message":   "Watch connection established",
+			"timestamp": time.Now().UTC(),
+			"revision":  revision,
+			"params": map[string]interface{}{
+				"group":     params.Group,
+				"version":   params.Version,
+				"kind":      params.Kind,
+				"namespace": params.Namespace,
+			},
 		},
-	}); err != nil {
+	}
+	if err := h.sendSSEEventWithRetry(c, "connected", connectedEvent); err != nil {
 		h.logger.Error("Failed to send connection event", zap.Error(err))
 		return
 	}
@@ -126,9 +130,13 @@ func (h *WatchHandler) WatchResource(c *gin.Context) {
 			}
 
 		case <-ticker.C:
-			if err := h.sendSSEEventWithRetry(c, "heartbeat", map[string]interface{}{
-				"timestamp": time.Now().UTC(),
-			}); err != nil {
+			heartbeatEvent := map[string]interface{}{
+				"type": "heartbeat",
+				"payload": map[string]interface{}{
+					"timestamp": time.Now().UTC(),
+				},
+			}
+			if err := h.sendSSEEventWithRetry(c, "heartbeat", heartbeatEvent); err != nil {
 				h.logger.Error("Failed to send heartbeat", zap.Error(err))
 				return
 			}
@@ -137,23 +145,28 @@ func (h *WatchHandler) WatchResource(c *gin.Context) {
 }
 
 func (h *WatchHandler) sendWatchEventWithRetry(c *gin.Context, event types.WatchEvent) error {
-	eventData := map[string]interface{}{
+	resourceEventData := map[string]interface{}{
 		"type":      event.Type,
 		"timestamp": event.Timestamp,
 		"revision":  event.Revision,
 	}
 
 	if event.Object != nil {
-		eventData["object"] = event.Object
+		resourceEventData["object"] = event.Object
 	} else {
-		eventData["objectKey"] = event.ObjectKey
+		resourceEventData["objectKey"] = event.ObjectKey
 	}
 
 	if event.Error != nil {
-		eventData["error"] = event.Error.Error()
+		resourceEventData["error"] = event.Error.Error()
 	}
 
-	return h.sendSSEEventWithRetry(c, string(event.Type), eventData)
+	watchEvent := map[string]interface{}{
+		"type":    "event",
+		"payload": resourceEventData,
+	}
+
+	return h.sendSSEEventWithRetry(c, "event", watchEvent)
 }
 
 func (h *WatchHandler) sendSSEEventWithRetry(c *gin.Context, eventType string, data interface{}) error {
