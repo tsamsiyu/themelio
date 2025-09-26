@@ -14,6 +14,9 @@ packages:
       ResourceStore:
       SchemaRepository:
       EtcdClientInterface:
+  github.com/tsamsiyu/themelio/api/internal/service/types:
+    interfaces:
+      ResourceService:
   github.com/tsamsiyu/themelio/api/internal/service/shared:
     interfaces:
       SchemaService:

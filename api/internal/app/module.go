@@ -43,6 +43,7 @@ var APIModule = fx.Options(
 	CommonModule,
 	fx.Provide(
 		handlers.NewResourceHandler,
+		handlers.NewWatchHandler,
 		server.NewRouter,
 		server.NewServer,
 	),

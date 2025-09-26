@@ -9,8 +9,9 @@ import (
 	"go.uber.org/zap"
 
 	internalerrors "github.com/tsamsiyu/themelio/api/internal/errors"
-	"github.com/tsamsiyu/themelio/api/internal/repository/types"
+	repositorytypes "github.com/tsamsiyu/themelio/api/internal/repository/types"
 	sharedservice "github.com/tsamsiyu/themelio/api/internal/service/shared"
+	servicetypes "github.com/tsamsiyu/themelio/api/internal/service/types"
 	sdkmeta "github.com/tsamsiyu/themelio/sdk/pkg/types/meta"
 	sdkschema "github.com/tsamsiyu/themelio/sdk/pkg/types/schema"
 )
@@ -22,29 +23,13 @@ var SENSITIVE_PATHS = []string{
 	"/metadata/resourceVersion",
 }
 
-type Params struct {
-	Group     string
-	Version   string
-	Kind      string
-	Namespace string
-	Name      string
-}
-
-type ResourceService interface {
-	ReplaceResource(ctx context.Context, params Params, jsonData []byte) error
-	GetResource(ctx context.Context, params Params) (*sdkmeta.Object, error)
-	ListResources(ctx context.Context, params Params) ([]*sdkmeta.Object, error)
-	DeleteResource(ctx context.Context, params Params) error
-	PatchResource(ctx context.Context, params Params, patchData []byte) (*sdkmeta.Object, error)
-}
-
 type resourceService struct {
 	logger        *zap.Logger
-	repo          types.ResourceRepository
+	repo          repositorytypes.ResourceRepository
 	schemaService sharedservice.SchemaService
 }
 
-func NewResourceService(logger *zap.Logger, repo types.ResourceRepository, schemaService sharedservice.SchemaService) ResourceService {
+func NewResourceService(logger *zap.Logger, repo repositorytypes.ResourceRepository, schemaService sharedservice.SchemaService) servicetypes.ResourceService {
 	return &resourceService{
 		logger:        logger,
 		repo:          repo,
@@ -52,7 +37,7 @@ func NewResourceService(logger *zap.Logger, repo types.ResourceRepository, schem
 	}
 }
 
-func (s *resourceService) ReplaceResource(ctx context.Context, params Params, jsonData []byte) error {
+func (s *resourceService) ReplaceResource(ctx context.Context, params servicetypes.Params, jsonData []byte) error {
 	payload, err := s.convertJSONToObject(jsonData)
 	if err != nil {
 		return err
@@ -77,7 +62,7 @@ func (s *resourceService) ReplaceResource(ctx context.Context, params Params, js
 	return nil
 }
 
-func (s *resourceService) GetResource(ctx context.Context, params Params) (*sdkmeta.Object, error) {
+func (s *resourceService) GetResource(ctx context.Context, params servicetypes.Params) (*sdkmeta.Object, error) {
 	schema, err := s.schemaService.Get(ctx, params.Group, params.Kind)
 	if err != nil {
 		return nil, err
@@ -91,7 +76,7 @@ func (s *resourceService) GetResource(ctx context.Context, params Params) (*sdkm
 	return s.repo.Get(ctx, objectKey)
 }
 
-func (s *resourceService) ListResources(ctx context.Context, params Params) ([]*sdkmeta.Object, error) {
+func (s *resourceService) ListResources(ctx context.Context, params servicetypes.Params) ([]*sdkmeta.Object, error) {
 	schema, err := s.schemaService.Get(ctx, params.Group, params.Kind)
 	if err != nil {
 		return nil, err
@@ -105,7 +90,7 @@ func (s *resourceService) ListResources(ctx context.Context, params Params) ([]*
 	return s.repo.List(ctx, typeMeta)
 }
 
-func (s *resourceService) DeleteResource(ctx context.Context, params Params) error {
+func (s *resourceService) DeleteResource(ctx context.Context, params servicetypes.Params) error {
 	schema, err := s.schemaService.Get(ctx, params.Group, params.Kind)
 	if err != nil {
 		return err
@@ -119,7 +104,7 @@ func (s *resourceService) DeleteResource(ctx context.Context, params Params) err
 	return s.repo.MarkDeleted(ctx, objectKey)
 }
 
-func (s *resourceService) PatchResource(ctx context.Context, params Params, patchData []byte) (*sdkmeta.Object, error) {
+func (s *resourceService) PatchResource(ctx context.Context, params servicetypes.Params, patchData []byte) (*sdkmeta.Object, error) {
 	schema, err := s.schemaService.Get(ctx, params.Group, params.Kind)
 	if err != nil {
 		return nil, err
@@ -165,6 +150,25 @@ func (s *resourceService) PatchResource(ctx context.Context, params Params, patc
 	return patchedResource, nil
 }
 
+func (s *resourceService) WatchResource(ctx context.Context, params servicetypes.Params, revision int64) (<-chan repositorytypes.WatchEvent, error) {
+	schema, err := s.schemaService.Get(ctx, params.Group, params.Kind)
+	if err != nil {
+		return nil, err
+	}
+
+	objType, err := getObjectTypeFromParams(schema, &params)
+	if err != nil {
+		return nil, err
+	}
+
+	watchChan, err := s.repo.Watch(ctx, objType, revision)
+	if err != nil {
+		return nil, err
+	}
+
+	return watchChan, nil
+}
+
 func (s *resourceService) convertJSONToObject(jsonData []byte) (*sdkmeta.Object, error) {
 	var obj sdkmeta.Object
 	if err := json.Unmarshal(jsonData, &obj); err != nil {
@@ -193,7 +197,7 @@ func (s *resourceService) validatePatchOperations(patch jsonpatch.Patch) error {
 	return nil
 }
 
-func getObjectKeyFromParams(schema *sdkschema.ObjectSchema, params *Params) (sdkmeta.ObjectKey, error) {
+func getObjectKeyFromParams(schema *sdkschema.ObjectSchema, params *servicetypes.Params) (sdkmeta.ObjectKey, error) {
 	objType, err := getObjectTypeFromParams(schema, params)
 	if err != nil {
 		return sdkmeta.ObjectKey{}, err
@@ -205,7 +209,7 @@ func getObjectKeyFromParams(schema *sdkschema.ObjectSchema, params *Params) (sdk
 	}, nil
 }
 
-func getObjectTypeFromParams(schema *sdkschema.ObjectSchema, params *Params) (*sdkmeta.ObjectType, error) {
+func getObjectTypeFromParams(schema *sdkschema.ObjectSchema, params *servicetypes.Params) (*sdkmeta.ObjectType, error) {
 	if schema.Scope == sdkschema.ResourceScopeCluster {
 		return &sdkmeta.ObjectType{
 			Group:   params.Group,

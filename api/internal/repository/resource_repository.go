@@ -125,8 +125,8 @@ func (r *resourceRepository) Delete(ctx context.Context, key sdkmeta.ObjectKey, 
 	return err
 }
 
-func (r *resourceRepository) Watch(ctx context.Context, objType *sdkmeta.ObjectType) (<-chan types.WatchEvent, error) {
-	return r.watchManager.Watch(ctx, objType)
+func (r *resourceRepository) Watch(ctx context.Context, objType *sdkmeta.ObjectType, revision int64) (<-chan types.WatchEvent, error) {
+	return r.watchManager.Watch(ctx, objType, revision)
 }
 
 // MarkDeleted marks a resource for deletion by setting deletionTimestamp and adding to deletion collection

@@ -419,7 +419,7 @@ func createTestWatchHandler(t *testing.T) (*WatchHandler, <-chan types.WatchEven
 		ResetAfter:        time.Hour,
 	})
 
-	handler := NewWatchHandler(objType, store, logger, config, backoff)
+	handler := NewWatchHandler(objType, store, logger, config, backoff, 0)
 	return handler, handler.EventChannel()
 }
 

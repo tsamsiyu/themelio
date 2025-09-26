@@ -43,7 +43,7 @@ func NewWatchManager(
 	}
 }
 
-func (m *WatchManager) Watch(ctx context.Context, objType *sdkmeta.ObjectType) (<-chan types.WatchEvent, error) {
+func (m *WatchManager) Watch(ctx context.Context, objType *sdkmeta.ObjectType, revision int64) (<-chan types.WatchEvent, error) {
 	clientChan := make(chan types.WatchEvent, 100)
 	keyStr := objectTypeToDbKey(objType)
 
@@ -52,7 +52,7 @@ func (m *WatchManager) Watch(ctx context.Context, objType *sdkmeta.ObjectType) (
 
 	_, exists := m.handlers[keyStr]
 	if !exists {
-		handler := NewWatchHandler(objType, m.store, m.logger, m.config, m.backoff)
+		handler := NewWatchHandler(objType, m.store, m.logger, m.config, m.backoff, revision)
 		m.handlers[keyStr] = handler
 		go m.startHandler(ctx, keyStr, handler)
 	}

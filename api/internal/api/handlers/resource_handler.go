@@ -8,18 +8,18 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/tsamsiyu/themelio/api/internal/api/errors"
-	"github.com/tsamsiyu/themelio/api/internal/service"
+	servicetypes "github.com/tsamsiyu/themelio/api/internal/service/types"
 )
 
 type ResourceHandler struct {
 	logger          *zap.Logger
-	resourceService service.ResourceService
+	resourceService servicetypes.ResourceService
 	validator       *validator.Validate
 }
 
 func NewResourceHandler(
 	logger *zap.Logger,
-	resourceService service.ResourceService,
+	resourceService servicetypes.ResourceService,
 	validator *validator.Validate,
 ) *ResourceHandler {
 	return &ResourceHandler{
@@ -30,7 +30,7 @@ func NewResourceHandler(
 }
 
 func (h *ResourceHandler) ReplaceResource(c *gin.Context) {
-	params, err := getParamsFromContextWithoutName(c)
+	params, err := getParamsFromContext(c)
 	if err != nil {
 		c.Error(err)
 		return
@@ -68,7 +68,7 @@ func (h *ResourceHandler) GetResource(c *gin.Context) {
 }
 
 func (h *ResourceHandler) ListResources(c *gin.Context) {
-	params, err := getParamsFromContextWithoutName(c)
+	params, err := getParamsFromContext(c)
 	if err != nil {
 		c.Error(err)
 		return
@@ -126,29 +126,14 @@ func (h *ResourceHandler) PatchResource(c *gin.Context) {
 	c.JSON(http.StatusOK, patchedResource)
 }
 
-func getParamsFromContextWithoutName(c *gin.Context) (service.Params, error) {
-	group := c.Param("group")
-	version := c.Param("version")
-	kind := c.Param("kind")
-	namespace := c.Param("namespace")
-
-	return service.Params{
-		Group:     group,
-		Version:   version,
-		Kind:      kind,
-		Namespace: namespace,
-		Name:      "",
-	}, nil
-}
-
-func getParamsFromContext(c *gin.Context) (service.Params, error) {
+func getParamsFromContext(c *gin.Context) (servicetypes.Params, error) {
 	group := c.Param("group")
 	version := c.Param("version")
 	kind := c.Param("kind")
 	namespace := c.Param("namespace")
 	name := c.Param("name")
 
-	return service.Params{
+	return servicetypes.Params{
 		Group:     group,
 		Version:   version,
 		Kind:      kind,

@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
 
+	servicetypes "github.com/tsamsiyu/themelio/api/internal/service/types"
 	"github.com/tsamsiyu/themelio/api/mocks"
 	sdkmeta "github.com/tsamsiyu/themelio/sdk/pkg/types/meta"
 	sdkschema "github.com/tsamsiyu/themelio/sdk/pkg/types/schema"
@@ -47,7 +48,7 @@ func TestPatchResource_InvalidPatch(t *testing.T) {
 	service := NewResourceService(logger, mockRepo, mockSchema)
 
 	ctx := context.Background()
-	params := Params{
+	params := servicetypes.Params{
 		Group:     "example.com",
 		Version:   "v1",
 		Kind:      "TestResource",

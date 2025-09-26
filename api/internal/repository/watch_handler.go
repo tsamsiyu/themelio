@@ -31,15 +31,17 @@ func NewWatchHandler(
 	logger *zap.Logger,
 	config types.WatchConfig,
 	backoff *lib.BackoffManager,
+	revision int64,
 ) *WatchHandler {
 	return &WatchHandler{
-		ObjType:   objType,
-		Store:     store,
-		Logger:    logger,
-		config:    config,
-		backoff:   backoff,
-		eventChan: make(chan types.WatchEvent, 100),
-		Cache:     make(map[sdkmeta.ObjectKey]types.WatchCacheEntry),
+		ObjType:      objType,
+		Store:        store,
+		Logger:       logger,
+		config:       config,
+		backoff:      backoff,
+		LastRevision: revision,
+		eventChan:    make(chan types.WatchEvent, 100),
+		Cache:        make(map[sdkmeta.ObjectKey]types.WatchCacheEntry),
 	}
 }
 
@@ -76,7 +78,12 @@ func (h *WatchHandler) watchLoop(ctx context.Context) {
 
 		watchChan := make(chan types.WatchEvent, 100)
 
-		go h.Store.Watch(watchCtx, h.ObjType, watchChan, h.LastRevision+1)
+		revision := int64(0) // by defaults listen only new events
+		if h.LastRevision > 0 {
+			revision = h.LastRevision + 1 // listen starting from next revision
+		}
+
+		go h.Store.Watch(watchCtx, h.ObjType, watchChan, revision)
 
 		watchErr := h.ProcessWatchEvents(watchCtx, watchChan)
 

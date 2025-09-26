@@ -20,7 +20,7 @@ type Server struct {
 	server *http.Server
 }
 
-func NewRouter(logger *zap.Logger, resourceHandler *handlers.ResourceHandler) *gin.Engine {
+func NewRouter(logger *zap.Logger, resourceHandler *handlers.ResourceHandler, watchHandler *handlers.WatchHandler) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
 
@@ -38,6 +38,7 @@ func NewRouter(logger *zap.Logger, resourceHandler *handlers.ResourceHandler) *g
 			resources.GET("/:group/:version/:kind", resourceHandler.ListResources)
 			resources.DELETE("/:group/:version/:kind/:name", resourceHandler.DeleteResource)
 			resources.PATCH("/:group/:version/:kind/:name", resourceHandler.PatchResource)
+			resources.GET("/:group/:version/:kind/watch", watchHandler.WatchResource)
 		}
 	}
 

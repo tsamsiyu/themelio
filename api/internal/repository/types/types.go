@@ -119,7 +119,7 @@ type ResourceRepository interface {
 	Get(ctx context.Context, key sdkmeta.ObjectKey) (*sdkmeta.Object, error)
 	List(ctx context.Context, objType *sdkmeta.ObjectType) ([]*sdkmeta.Object, error)
 	Delete(ctx context.Context, key sdkmeta.ObjectKey, lockValue string) error
-	Watch(ctx context.Context, objType *sdkmeta.ObjectType) (<-chan WatchEvent, error)
+	Watch(ctx context.Context, objType *sdkmeta.ObjectType, revision int64) (<-chan WatchEvent, error)
 	MarkDeleted(ctx context.Context, key sdkmeta.ObjectKey) error
 	ListDeletions(ctx context.Context, lockKey string, lockExp time.Duration, batchLimit int) (*DeletionBatch, error)
 }
