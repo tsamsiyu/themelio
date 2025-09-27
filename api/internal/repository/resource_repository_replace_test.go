@@ -56,7 +56,7 @@ func TestResourceRepository_Replace_NewResource(t *testing.T) {
 	mockEtcdClient := mocks.NewMockEtcdClientInterface(t)
 	mockTxn := mocks.NewMockTxn(t)
 	mockEtcdClient.EXPECT().Txn(ctx).Return(mockTxn)
-	mockTxn.EXPECT().Then(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(mockTxn)
+	mockTxn.EXPECT().Then(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(mockTxn)
 	mockTxn.EXPECT().Commit().Return(&clientv3.TxnResponse{Succeeded: true}, nil)
 	mockClient.EXPECT().Client().Return(mockEtcdClient)
 
@@ -121,7 +121,7 @@ func TestResourceRepository_Replace_NewResource_WithOwnerReferences(t *testing.T
 	mockEtcdClient := mocks.NewMockEtcdClientInterface(t)
 	mockTxn := mocks.NewMockTxn(t)
 	mockEtcdClient.EXPECT().Txn(ctx).Return(mockTxn)
-	mockTxn.EXPECT().Then(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(mockTxn)
+	mockTxn.EXPECT().Then(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(mockTxn)
 	mockTxn.EXPECT().Commit().Return(&clientv3.TxnResponse{Succeeded: true}, nil)
 	mockClient.EXPECT().Client().Return(mockEtcdClient)
 
@@ -216,7 +216,7 @@ func TestResourceRepository_Replace_UpdateExistingResource(t *testing.T) {
 	mockEtcdClient := mocks.NewMockEtcdClientInterface(t)
 	mockTxn := mocks.NewMockTxn(t)
 	mockEtcdClient.EXPECT().Txn(ctx).Return(mockTxn)
-	mockTxn.EXPECT().Then(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(mockTxn)
+	mockTxn.EXPECT().Then(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(mockTxn)
 	mockTxn.EXPECT().Commit().Return(&clientv3.TxnResponse{Succeeded: true}, nil)
 	mockClient.EXPECT().Client().Return(mockEtcdClient)
 
@@ -311,12 +311,220 @@ func TestResourceRepository_Replace_NoOwnerReferenceChanges(t *testing.T) {
 	mockEtcdClient := mocks.NewMockEtcdClientInterface(t)
 	mockTxn := mocks.NewMockTxn(t)
 	mockEtcdClient.EXPECT().Txn(ctx).Return(mockTxn)
-	mockTxn.EXPECT().Then(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(mockTxn)
+	mockTxn.EXPECT().Then(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(mockTxn)
 	mockTxn.EXPECT().Commit().Return(&clientv3.TxnResponse{Succeeded: true}, nil)
 	mockClient.EXPECT().Client().Return(mockEtcdClient)
 
 	// When: Updating the resource without changing owner references
 	err := repo.Replace(ctx, newResource, false)
+
+	// Then: The update should succeed
+	assert.NoError(t, err)
+}
+
+func TestResourceRepository_Replace_WithLabelsChanges(t *testing.T) {
+	logger := zap.NewNop()
+	mockStore := mocks.NewMockResourceStore(t)
+	mockClient := mocks.NewMockClientWrapper(t)
+	backoffManager := &lib.BackoffManager{}
+	watchConfig := types.WatchConfig{}
+
+	repo := NewResourceRepository(logger, mockStore, mockClient, watchConfig, backoffManager)
+
+	ctx := context.Background()
+	key := sdkmeta.ObjectKey{
+		ObjectType: sdkmeta.ObjectType{
+			Group:     "example.com",
+			Version:   "v1",
+			Kind:      "TestResource",
+			Namespace: "default",
+		},
+		Name: "test-resource",
+	}
+
+	// Existing resource with labels
+	existingResource := &sdkmeta.Object{
+		ObjectKey: &key,
+		ObjectMeta: &sdkmeta.ObjectMeta{
+			Labels: map[string]string{
+				"app":     "test-app",
+				"version": "v1.0",
+				"env":     "dev",
+			},
+			Annotations: map[string]string{},
+		},
+		SystemMeta: &sdkmeta.SystemMeta{
+			UID: "test-uid",
+		},
+		Spec: map[string]interface{}{
+			"replicas": 1,
+		},
+	}
+
+	// New resource with different labels
+	newResource := &sdkmeta.Object{
+		ObjectKey: &key,
+		ObjectMeta: &sdkmeta.ObjectMeta{
+			Labels: map[string]string{
+				"app":     "test-app",
+				"version": "v2.0", // changed
+				// "env": "dev" removed
+				"tier": "frontend", // added
+			},
+			Annotations: map[string]string{},
+		},
+		SystemMeta: &sdkmeta.SystemMeta{
+			UID: "test-uid",
+		},
+		Spec: map[string]interface{}{
+			"replicas": 3,
+		},
+	}
+
+	// Given: An existing resource with labels that will be modified
+	mockStore.EXPECT().Get(ctx, key).Return(existingResource, nil)
+	mockStore.EXPECT().BuildPutTxOp(newResource).Return(clientv3.OpPut("/example.com/v1/TestResource/default/test-resource", "{}"), nil)
+
+	// Mock etcd client and transaction
+	mockEtcdClient := mocks.NewMockEtcdClientInterface(t)
+	mockTxn := mocks.NewMockTxn(t)
+	mockEtcdClient.EXPECT().Txn(ctx).Return(mockTxn)
+	mockTxn.EXPECT().Then(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(mockTxn)
+	mockTxn.EXPECT().Commit().Return(&clientv3.TxnResponse{Succeeded: true}, nil)
+	mockClient.EXPECT().Client().Return(mockEtcdClient)
+
+	// When: Updating the resource with label changes
+	err := repo.Replace(ctx, newResource, false)
+
+	// Then: The update should succeed
+	assert.NoError(t, err)
+}
+
+func TestResourceRepository_Replace_NewResourceWithLabels(t *testing.T) {
+	logger := zap.NewNop()
+	mockStore := mocks.NewMockResourceStore(t)
+	mockClient := mocks.NewMockClientWrapper(t)
+	backoffManager := &lib.BackoffManager{}
+	watchConfig := types.WatchConfig{}
+
+	repo := NewResourceRepository(logger, mockStore, mockClient, watchConfig, backoffManager)
+
+	ctx := context.Background()
+	key := sdkmeta.ObjectKey{
+		ObjectType: sdkmeta.ObjectType{
+			Group:     "example.com",
+			Version:   "v1",
+			Kind:      "TestResource",
+			Namespace: "default",
+		},
+		Name: "new-resource",
+	}
+	resource := &sdkmeta.Object{
+		ObjectKey: &key,
+		ObjectMeta: &sdkmeta.ObjectMeta{
+			Labels: map[string]string{
+				"app":     "new-app",
+				"version": "v1.0",
+				"env":     "prod",
+			},
+			Annotations: map[string]string{},
+		},
+		SystemMeta: &sdkmeta.SystemMeta{
+			UID: "new-uid",
+		},
+		Spec: map[string]interface{}{
+			"replicas": 3,
+		},
+	}
+
+	// Given: A new resource with labels that doesn't exist yet
+	mockStore.EXPECT().Get(ctx, key).Return(nil, NewNotFoundError("resource not found"))
+	mockStore.EXPECT().BuildPutTxOp(resource).Return(clientv3.OpPut("/example.com/v1/TestResource/default/new-resource", "{}"), nil)
+
+	// Mock etcd client and transaction
+	mockEtcdClient := mocks.NewMockEtcdClientInterface(t)
+	mockTxn := mocks.NewMockTxn(t)
+	mockEtcdClient.EXPECT().Txn(ctx).Return(mockTxn)
+	mockTxn.EXPECT().Then(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(mockTxn)
+	mockTxn.EXPECT().Commit().Return(&clientv3.TxnResponse{Succeeded: true}, nil)
+	mockClient.EXPECT().Client().Return(mockEtcdClient)
+
+	// When: Creating the new resource with labels
+	err := repo.Replace(ctx, resource, false)
+
+	// Then: The creation should succeed
+	assert.NoError(t, err)
+}
+
+func TestResourceRepository_Replace_OptimisticLocking(t *testing.T) {
+	logger := zap.NewNop()
+	mockStore := mocks.NewMockResourceStore(t)
+	mockClient := mocks.NewMockClientWrapper(t)
+	backoffManager := &lib.BackoffManager{}
+	watchConfig := types.WatchConfig{}
+
+	repo := NewResourceRepository(logger, mockStore, mockClient, watchConfig, backoffManager)
+
+	ctx := context.Background()
+	key := sdkmeta.ObjectKey{
+		ObjectType: sdkmeta.ObjectType{
+			Group:     "example.com",
+			Version:   "v1",
+			Kind:      "TestResource",
+			Namespace: "default",
+		},
+		Name: "test-resource",
+	}
+
+	// Existing resource
+	existingResource := &sdkmeta.Object{
+		ObjectKey: &key,
+		ObjectMeta: &sdkmeta.ObjectMeta{
+			Labels:      map[string]string{},
+			Annotations: map[string]string{},
+		},
+		SystemMeta: &sdkmeta.SystemMeta{
+			UID:     "test-uid",
+			Version: 123,
+		},
+		Spec: map[string]interface{}{
+			"replicas": 1,
+		},
+	}
+
+	// New resource with same version
+	newResource := &sdkmeta.Object{
+		ObjectKey: &key,
+		ObjectMeta: &sdkmeta.ObjectMeta{
+			Labels:      map[string]string{},
+			Annotations: map[string]string{},
+		},
+		SystemMeta: &sdkmeta.SystemMeta{
+			UID:     "test-uid",
+			Version: 123,
+		},
+		Spec: map[string]interface{}{
+			"replicas": 3,
+		},
+	}
+
+	// Given: An existing resource with optimistic locking enabled
+	mockStore.EXPECT().Get(ctx, key).Return(existingResource, nil)
+	mockStore.EXPECT().BuildPutTxOp(newResource).Return(clientv3.OpPut("/example.com/v1/TestResource/default/test-resource", "{}"), nil)
+
+	// Mock etcd client and transaction with optimistic locking
+	mockEtcdClient := mocks.NewMockEtcdClientInterface(t)
+	mockTxn := mocks.NewMockTxn(t)
+	mockEtcdClient.EXPECT().Txn(ctx).Return(mockTxn)
+	mockTxn.EXPECT().If(mock.MatchedBy(func(cmp clientv3.Cmp) bool {
+		return true // Accept any compare operation
+	})).Return(mockTxn)
+	mockTxn.EXPECT().Then(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(mockTxn)
+	mockTxn.EXPECT().Commit().Return(&clientv3.TxnResponse{Succeeded: true}, nil)
+	mockClient.EXPECT().Client().Return(mockEtcdClient)
+
+	// When: Updating the resource with optimistic locking
+	err := repo.Replace(ctx, newResource, true)
 
 	// Then: The update should succeed
 	assert.NoError(t, err)

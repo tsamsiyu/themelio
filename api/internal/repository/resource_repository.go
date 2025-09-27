@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/pkg/errors"
@@ -18,6 +19,7 @@ type resourceRepository struct {
 	clientWrapper     types.ClientWrapper
 	ownerRefOpBuilder *OwnerReferenceOpBuilder
 	deletionOpBuilder *DeletionOpBuilder
+	labelsOpBuilder   *LabelsOperations
 	watchManager      *WatchManager
 	logger            *zap.Logger
 }
@@ -31,12 +33,14 @@ func NewResourceRepository(
 ) types.ResourceRepository {
 	ownerRefOpBuilder := NewOwnerReferenceOpBuilder(store, clientWrapper, logger)
 	deletionOpBuilder := NewDeletionOpBuilder(store, clientWrapper, logger)
+	labelsOpBuilder := NewLabelsOperations(store, logger)
 	watchManager := NewWatchManager(store, logger, watchConfig, backoffManager)
 	return &resourceRepository{
 		store:             store,
 		clientWrapper:     clientWrapper,
 		ownerRefOpBuilder: ownerRefOpBuilder,
 		deletionOpBuilder: deletionOpBuilder,
+		labelsOpBuilder:   labelsOpBuilder,
 		watchManager:      watchManager,
 		logger:            logger,
 	}
@@ -66,14 +70,26 @@ func (r *resourceRepository) Replace(ctx context.Context, obj *sdkmeta.Object, o
 		obj.ObjectMeta.OwnerReferences,
 	)
 
+	var oldLabels map[string]string
+	if oldObj != nil {
+		oldLabels = oldObj.ObjectMeta.Labels
+	}
+
+	labelsOps := r.labelsOpBuilder.BuildLabelsUpdateOps(
+		*obj.ObjectKey,
+		oldLabels,
+		obj.ObjectMeta.Labels,
+	)
+
 	txn := r.clientWrapper.Client().Txn(ctx)
 
 	ops := []clientv3.Op{}
 	ops = append(ops, putOp)
 	ops = append(ops, ownerRefOps...)
+	ops = append(ops, labelsOps...)
 
 	if optimisticLock && oldObj != nil {
-		onlyIfOp := clientv3.Compare(clientv3.Value(objectKeyToDbKey(*obj.ObjectKey)), "=", obj.SystemMeta.Version)
+		onlyIfOp := clientv3.Compare(clientv3.Value(objectKeyToDbKey(*obj.ObjectKey)), "=", fmt.Sprintf("%d", obj.SystemMeta.Version))
 		_, err = txn.If(onlyIfOp).Then(ops...).Commit()
 		return err
 	}

@@ -73,9 +73,5 @@ Currently, the following resources are planned:
 
 
 TODO:
-- mocks
-- sdk types
-- watcher reconciliation
-- optimistic locking
 - filtering by labels
-- objects list
+- pagination
