@@ -118,6 +118,8 @@ func (r *resourceRepository) Delete(ctx context.Context, key sdkmeta.ObjectKey, 
 
 	childrenReferencesClenaupOps := r.ownerRefOpBuilder.BuildIndexesCleanupOps(key, obj.ObjectMeta.OwnerReferences)
 
+	labelsCleanupOps := r.labelsOpBuilder.BuildLabelsCleanupOps(key, obj.ObjectMeta.Labels)
+
 	childResources, err := r.ownerRefOpBuilder.QueryChildren(ctx, key)
 	if err != nil {
 		return errors.Wrap(err, "failed to query children resources")
@@ -134,6 +136,7 @@ func (r *resourceRepository) Delete(ctx context.Context, key sdkmeta.ObjectKey, 
 	ops = append(ops, clientv3.OpDelete(objectKeyToDbKey(key)))
 	ops = append(ops, clientv3.OpDelete(deletionLockDbKey(key)))
 	ops = append(ops, childrenReferencesClenaupOps...)
+	ops = append(ops, labelsCleanupOps...)
 	ops = append(ops, childrenCleanupOps...)
 
 	txn := r.clientWrapper.Client().Txn(ctx)

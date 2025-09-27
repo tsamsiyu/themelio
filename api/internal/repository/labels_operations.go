@@ -42,6 +42,21 @@ func (o *LabelsOperations) BuildLabelsUpdateOps(
 	return ops
 }
 
+func (o *LabelsOperations) BuildLabelsCleanupOps(objKey sdkmeta.ObjectKey, labels map[string]string) []clientv3.Op {
+	var ops []clientv3.Op
+
+	if labels == nil {
+		return ops
+	}
+
+	for label, value := range labels {
+		dbKey := buildLabelIndexDbKey(objKey, label, value)
+		ops = append(ops, clientv3.OpDelete(dbKey))
+	}
+
+	return ops
+}
+
 func buildLabelIndexDbKey(objKey sdkmeta.ObjectKey, label string, labelValue string) string {
 	typeKey := objectTypeToDbKey(&objKey.ObjectType)
 	return fmt.Sprintf("/index/label%s/%s/%s/%s", typeKey, label, labelValue, objKey.Name)

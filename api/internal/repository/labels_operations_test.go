@@ -305,3 +305,93 @@ func TestBuildLabelIndexDbKey(t *testing.T) {
 
 	assert.Equal(t, expected, key)
 }
+
+func TestLabelsOperations_BuildLabelsCleanupOps(t *testing.T) {
+	logger := zap.NewNop()
+	mockStore := mocks.NewMockResourceStore(t)
+	labelsOpBuilder := NewLabelsOperations(mockStore, logger)
+
+	objKey := sdkmeta.ObjectKey{
+		ObjectType: sdkmeta.ObjectType{
+			Group:     "example.com",
+			Version:   "v1",
+			Kind:      "TestResource",
+			Namespace: "default",
+		},
+		Name: "test-resource",
+	}
+
+	labels := map[string]string{
+		"app":     "test-app",
+		"version": "v1.0",
+		"env":     "dev",
+	}
+
+	ops := labelsOpBuilder.BuildLabelsCleanupOps(objKey, labels)
+
+	// Should have 3 delete operations for the labels
+	assert.Len(t, ops, 3)
+
+	// Check that all operations are delete operations
+	for _, op := range ops {
+		assert.True(t, op.IsDelete())
+	}
+
+	// Check that the keys are correctly formatted
+	expectedKeys := []string{
+		"/index/label/example.com/v1/TestResource/default/app/test-app/test-resource",
+		"/index/label/example.com/v1/TestResource/default/version/v1.0/test-resource",
+		"/index/label/example.com/v1/TestResource/default/env/dev/test-resource",
+	}
+
+	actualKeys := make([]string, len(ops))
+	for i, op := range ops {
+		actualKeys[i] = string(op.KeyBytes())
+	}
+
+	for _, expectedKey := range expectedKeys {
+		assert.Contains(t, actualKeys, expectedKey)
+	}
+}
+
+func TestLabelsOperations_BuildLabelsCleanupOps_NilLabels(t *testing.T) {
+	logger := zap.NewNop()
+	mockStore := mocks.NewMockResourceStore(t)
+	labelsOpBuilder := NewLabelsOperations(mockStore, logger)
+
+	objKey := sdkmeta.ObjectKey{
+		ObjectType: sdkmeta.ObjectType{
+			Group:     "example.com",
+			Version:   "v1",
+			Kind:      "TestResource",
+			Namespace: "default",
+		},
+		Name: "test-resource",
+	}
+
+	ops := labelsOpBuilder.BuildLabelsCleanupOps(objKey, nil)
+
+	// Should have no operations when labels are nil
+	assert.Len(t, ops, 0)
+}
+
+func TestLabelsOperations_BuildLabelsCleanupOps_EmptyLabels(t *testing.T) {
+	logger := zap.NewNop()
+	mockStore := mocks.NewMockResourceStore(t)
+	labelsOpBuilder := NewLabelsOperations(mockStore, logger)
+
+	objKey := sdkmeta.ObjectKey{
+		ObjectType: sdkmeta.ObjectType{
+			Group:     "example.com",
+			Version:   "v1",
+			Kind:      "TestResource",
+			Namespace: "default",
+		},
+		Name: "test-resource",
+	}
+
+	ops := labelsOpBuilder.BuildLabelsCleanupOps(objKey, map[string]string{})
+
+	// Should have no operations when labels are empty
+	assert.Len(t, ops, 0)
+}

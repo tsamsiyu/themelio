@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -291,4 +292,66 @@ func TestResourceRepository_Delete_ErrorDuringOwnerReferenceCleanup(t *testing.T
 	// Then: An error should be returned
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to query children resources")
+}
+
+func TestResourceRepository_Delete_ResourceWithLabels(t *testing.T) {
+	logger := zap.NewNop()
+	mockStore := mocks.NewMockResourceStore(t)
+	mockClient := mocks.NewMockClientWrapper(t)
+	backoffManager := &lib.BackoffManager{}
+	watchConfig := types.WatchConfig{}
+
+	repo := NewResourceRepository(logger, mockStore, mockClient, watchConfig, backoffManager)
+
+	ctx := context.Background()
+	key := sdkmeta.ObjectKey{
+		ObjectType: sdkmeta.ObjectType{
+			Group:     "example.com",
+			Version:   "v1",
+			Kind:      "TestResource",
+			Namespace: "default",
+		},
+		Name: "test-resource",
+	}
+	resource := &sdkmeta.Object{
+		ObjectKey: &key,
+		ObjectMeta: &sdkmeta.ObjectMeta{
+			Labels: map[string]string{
+				"app":     "test-app",
+				"version": "v1.0",
+				"env":     "dev",
+			},
+			Annotations:     map[string]string{},
+			OwnerReferences: []sdkmeta.OwnerReference{},
+		},
+		SystemMeta: &sdkmeta.SystemMeta{
+			UID: "test-uid",
+		},
+		Spec: map[string]interface{}{
+			"replicas": 3,
+		},
+	}
+
+	// Given: A resource with labels that needs to be deleted
+	mockStore.EXPECT().Get(ctx, key).Return(resource, nil)
+
+	// Mock children query (no children)
+	indexPrefix := fmt.Sprintf("/index/owner-reference/%s", objectKeyToDbKey(key))
+	mockClient.EXPECT().List(ctx, types.Paging{Prefix: indexPrefix}).Return(&types.Batch{KVs: []types.KeyValue{}}, nil)
+
+	// Mock etcd client and transaction
+	mockEtcdClient := mocks.NewMockEtcdClientInterface(t)
+	mockTxn := mocks.NewMockTxn(t)
+	mockEtcdClient.EXPECT().Txn(ctx).Return(mockTxn)
+	mockTxn.EXPECT().If(mock.Anything).Return(mockTxn)
+	// 2 base ops + 0 owner ref ops + 3 labels ops + 0 children ops = 5 total
+	mockTxn.EXPECT().Then(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(mockTxn)
+	mockTxn.EXPECT().Commit().Return(&clientv3.TxnResponse{Succeeded: true}, nil)
+	mockClient.EXPECT().Client().Return(mockEtcdClient)
+
+	// When: Deleting the resource with labels
+	err := repo.Delete(ctx, key, "test-lock")
+
+	// Then: The deletion should succeed
+	assert.NoError(t, err)
 }
